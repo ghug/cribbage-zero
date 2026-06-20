@@ -79,8 +79,13 @@
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
 
+  // a well-formed checkpoint: right hidden size and full weight matrices (guards against junk on the branch)
+  function validCkpt(o) {
+    return o && o.nHid === HID && Array.isArray(o.W1) && Array.isArray(o.W1[0]) && o.W1[0].length === o.nHid
+      && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp);
+  }
   // --- local persistence ---
-  function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (o && Array.isArray(o.W1)) return o; } catch (e) {} return null; }
+  function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(o)) return o; } catch (e) {} return null; }
   function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(netToObj(net, iter))); } catch (e) { log("local save failed: " + e.message); } }
 
   // --- GitHub net branch (orphan force-push = always one commit) ---
@@ -136,6 +141,7 @@
     var localO = loadLocalObj();
     var remoteO = null;
     if (token) { progress("checking GitHub…"); try { remoteO = await pullNet(); log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
+    if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
     var best = null;
     if (localO && remoteO) best = (remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO;
     else best = localO || remoteO;
