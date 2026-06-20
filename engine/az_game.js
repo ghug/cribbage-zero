@@ -124,8 +124,9 @@ class CribGame {
       if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
       for (const x of rr) f.push(x); for (const x of ss) f.push(x);
     }
-    // phase one-hot, who deals, to-act-is-me
-    f.push(this.phase === "discard" ? 1 : 0, this.phase === "peg" ? 1 : 0, this.dealer === player ? 1 : 0, this.toAct === player ? 1 : 0);
+    // phase one-hot, who deals (NB: "to-act-is-me" is omitted — it's always 1, since we only ever
+    // encode the player about to move, so it carried no information)
+    f.push(this.phase === "discard" ? 1 : 0, this.phase === "peg" ? 1 : 0, this.dealer === player ? 1 : 0);
     // scores (to-go, normalized) — mine then opp
     f.push((TARGET - this.scores[player]) / TARGET, (TARGET - this.scores[opp]) / TARGET);
     // pegging context: count, my/opp peg-hand sizes
@@ -146,7 +147,7 @@ class CribGame {
     for (const x of sr) f.push(x); for (const x of ssr) f.push(x);
     return f;
   }
-  static get INPUT_DIM() { return 6 * 17 + 4 + 2 + 3 + 1 + 6 * 13 + 17; }   // 207: hand(6×17) + flags/scores/peg/go + pile(6×13) + starter(17)
+  static get INPUT_DIM() { return 6 * 17 + 3 + 2 + 3 + 1 + 6 * 13 + 17; }   // 206: hand(6×17) + phase2/dealer1 + scores2 + peg3 + go1 + pile(6×13) + starter(17)
   static get NPOL() { return NPOL; }
 
   // clone with the opponent's hidden cards resampled from the unseen pool (for IS-MCTS determinization)
