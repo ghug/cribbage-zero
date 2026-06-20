@@ -1,4 +1,24 @@
-# Cribbage Zero — distributed self-play
+# Cribbage Zero — self-play training
+
+## Two modes (toggle in the app)
+
+**1. On-device trainer (default).** One phone runs the whole AlphaZero loop locally — self-play → SGD
+train → repeat — and pushes the net to GitHub for safekeeping. No Cloudflare, no servers, no rate limits.
+- The APK page is `local.html` (the app's `index.html` routes to the saved mode).
+- Net storage: on Start it resumes from whichever is newer (localStorage or GitHub); every N iters it
+  **force-pushes an orphan commit** to a `net` branch (`checkpoints/az_checkpoint.json`) — so the branch
+  always holds exactly one commit (latest net, zero history bloat). Pull it back from
+  `https://raw.githubusercontent.com/<owner>/<repo>/net/checkpoints/az_checkpoint.json`.
+- Needs a **fine-grained PAT with Contents: write** on the repo, pasted into the app (blank = train-only,
+  no pushing). This is the simple path for 1–2 phones.
+
+**2. Cloudflare worker (optional).** The distributed bus below — many phones/PCs push self-play to a
+Cloudflare Worker + D1, and a scheduled GitHub Action trains. Use this only if you're fanning out across
+many contributors; otherwise mode 1 is simpler. The rest of this doc covers mode 2.
+
+---
+
+## Cloudflare worker mode (distributed)
 
 Workers (phone browsers, the APK, and PCs) generate self-play games and push them to a small
 **Cloudflare Worker + D1** data-bus; a single **scheduled GitHub Action trainer** consumes them, trains
@@ -117,7 +137,11 @@ Request discipline (so the free tier stretches): the worker does **no periodic p
 Default upload cadence is the "Upload every (min)" field (5).
 
 Free-tier budget (shared across **all** phones): **100k Worker requests/day** and **100k D1 row-writes/day**.
-Each shard costs 1 request + 2 writes (insert, then the trainer's prune). Keeping every sample, a full-time
-phone uploads many shards/day, so the free tier sustains roughly **10–20 full-time phones**. For more, go
-**Cloudflare Workers Paid ($5/mo)** — D1 jumps to ~50M writes/day, removing the ceiling (the single
-GitHub-Action trainer then becomes the bottleneck; run it more often or shard the training).
+Each shard costs 1 request + 2 writes (insert + the trainer's prune) and holds ≤1500 samples. A phone at
+max throughput produces **~1500–1700 samples/s (~140M samples/day)** — on its own roughly **2× the free
+write budget**. So keeping every sample, the free tier comfortably suits about **one** full-time phone
+(or a couple run intermittently / at fewer sims); a 24/7 max-throughput phone may hit the daily D1-write
+cap (uploads then fail until the UTC reset — no charge). For sustained max-throughput or more phones,
+either **subsample at the worker** or go **Cloudflare Workers Paid ($5/mo, ~50M writes/day)** — beyond
+which the single GitHub-Action trainer is the bottleneck. The phone always out-produces one trainer, so
+most self-play is inherently surplus regardless of tier.
