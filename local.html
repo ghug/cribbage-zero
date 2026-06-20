@@ -34,6 +34,7 @@
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:140px; overflow:auto; white-space:pre-wrap; }
   .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
   .reset { color:var(--mut); font-size:12px; text-decoration:underline; cursor:pointer; }
+  .footer { text-align:center; color:var(--mut); font-size:11px; opacity:.7; margin:18px 0 0; }
   .overlay { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.62); padding:20px; display:none; align-items:center; justify-content:center; }
   .overlay.open { display:flex; }
   .modal { max-width:400px; width:100%; background:var(--bg2); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:0 14px 44px rgba(0,0,0,.55); max-height:85vh; overflow:auto; }
@@ -51,8 +52,7 @@
     <button id="gear" class="icon" type="button" aria-label="Settings">⚙</button>
     <button id="aboutBtn" class="icon" type="button" aria-label="About">ⓘ</button>
   </div>
-  <p class="sub">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
-  <p style="margin:0 0 14px;"><span id="tomode" class="reset">⇄ Use Cloudflare worker mode instead</span></p>
+  <p class="sub" style="margin:0 0 16px;">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
 
   <div class="row">
     <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
@@ -76,7 +76,8 @@
   <div id="log"></div>
   <p class="note">Each iteration: self-play games, then SGD-train on them. Progress is saved on this device
   every iteration and pushed to the GitHub <b>net</b> branch. On Start it resumes from whichever is newer,
-  local or GitHub. <span id="reset" class="reset">Reset net</span>.</p>
+  local or GitHub. <span id="reset" class="reset">Reset local net</span>.</p>
+  <p class="footer">Cribbage Zero v<span id="footerVer">0.1.9</span></p>
 </div>
 
 <!-- Settings modal -->
@@ -89,6 +90,7 @@
     <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
     <label for="graphEvery">Graph point every (games)</label>
     <input id="graphEvery" type="number" min="1" value="10000" />
+    <button class="done full" id="tomode" type="button">⇄ Switch to Cloudflare worker mode</button>
     <button class="done full" id="openAbout" type="button">About Cribbage Zero</button>
   </div>
 </div>
@@ -111,6 +113,7 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
+  var VERSION = "0.1.9";   // keep in sync with android/app/build.gradle versionName
   var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
@@ -224,7 +227,7 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  function reset() { if (running) { log("stop first"); return; } if (!confirm("Discard the trained net and start over?")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastEval = null; lastLoss = 0; render(); showStats(); drawGraph(); log("net reset to fresh"); }
+  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastEval = null; lastLoss = 0; render(); showStats(); drawGraph(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
@@ -235,6 +238,7 @@
   $("openAbout").addEventListener("click", function () { close($("settingsOverlay")); open($("aboutOverlay")); });
   $("graphBox").addEventListener("toggle", function () { if ($("graphBox").open) drawGraph(); });
 
+  $("ver").textContent = VERSION; $("footerVer").textContent = VERSION;
   // restore config
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
