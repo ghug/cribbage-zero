@@ -38,7 +38,8 @@ tasks.register('syncWebAssets', Copy) {
     def repoRoot = rootProject.projectDir.parentFile
     into layout.projectDirectory.dir('src/main/assets')
     from(repoRoot) {
-        include 'worker.html'
+        include 'local.html'      // the on-device trainer (the app's page)
+        include 'worker.html'     // distributed worker (also bundled, for completeness)
         include 'worker/**'
     }
 }

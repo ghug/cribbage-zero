@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Trainer</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --red:#c8412b; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:460px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 18px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btns { display:flex; gap:10px; margin:18px 0 8px; }
+  button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
+  #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; } #export { background:var(--gold); color:#241f0e; }
+  button:disabled { opacity:.4; }
+  .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
+  .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
+  #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
+  #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:12px; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:150px; overflow:auto; white-space:pre-wrap; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+  .reset { color:var(--mut); font-size:12px; text-decoration:underline; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Cribbage Zero — Trainer</h1>
+  <p class="sub">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
+
+  <label for="token">GitHub token (Contents: write)</label>
+  <input id="token" type="password" placeholder="ghp_… — leave blank to train only on-device" autocapitalize="off" autocorrect="off" />
+  <label for="repo">Repo (owner/name)</label>
+  <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
+  <div class="row">
+    <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
+    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="20" /></div>
+    <div><label for="push">Push every</label><input id="push" type="number" min="1" value="10" /></div>
+  </div>
+
+  <div class="btns">
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="export">Export</button>
+  </div>
+
+  <div class="counter"><b id="count">0</b><span>iterations trained</span></div>
+  <div id="progress"></div>
+  <div id="stats"></div>
+  <div id="log"></div>
+  <p class="note">Each iteration: self-play games, then SGD-train on them. The net is saved on this device
+  every iteration and pushed to the GitHub <b>net</b> branch every few iters (a single force-updated commit
+  — no history bloat). On Start it resumes from whichever is newer, local or GitHub. <span id="reset" class="reset">Reset net</span>.</p>
+</div>
+
+<script src="worker/az_bundle.js"></script><!-- selfPlay, train, freshNet, netToObj/netFromObj, evalVsRandom, makeRng -->
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
+  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
+  var running = false, net = null, iter = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
+  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
+  var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000); }
+  function setRunning(on) { running = on; $("start").disabled = on; $("stop").disabled = !on; }
+  function render() { $("count").textContent = iter; }
+  function showStats() {
+    var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
+    var s = "loss " + (lastLoss ? lastLoss.toFixed(3) : "—") + " · ~" + gps.toFixed(1) + " games/s";
+    if (lastEval != null) s += " · vs random " + (100 * lastEval).toFixed(0) + "%";
+    $("stats").textContent = s;
+  }
+  function progress(t) { $("progress").textContent = running ? t : ""; }
+
+  // --- local persistence ---
+  function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (o && Array.isArray(o.W1)) return o; } catch (e) {} return null; }
+  function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(netToObj(net, iter))); } catch (e) { log("local save failed: " + e.message); } }
+
+  // --- GitHub net branch (orphan force-push = always one commit) ---
+  function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function unb64(s) { return decodeURIComponent(escape(atob(s))); }
+  async function gh(method, path, body) {
+    var res = await fetch("https://api.github.com" + path, { method: method,
+      headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" },
+      body: body ? JSON.stringify(body) : undefined });
+    var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
+    return { status: res.status, body: j };
+  }
+  async function pullNet() {
+    try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); }
+    catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
+  }
+  async function pushNet() {
+    var content = b64(JSON.stringify(netToObj(net, iter)));
+    var blob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: content, encoding: "base64" });
+    var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.body.sha }] });
+    var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter, tree: tree.body.sha, parents: [] });
+    var ref; try { ref = await gh("GET", "/repos/" + repo + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
+    if (ref.status === 200) await gh("PATCH", "/repos/" + repo + "/git/refs/heads/" + BRANCH, { sha: commit.body.sha, force: true });
+    else await gh("POST", "/repos/" + repo + "/git/refs", { ref: "refs/heads/" + BRANCH, sha: commit.body.sha });
+  }
+
+  async function trainLoop() {
+    var sims = parseInt($("sims").value, 10) || 20, gpi = parseInt($("games").value, 10) || 40;
+    while (running) {
+      var data = [];
+      for (var g = 0; g < gpi && running; g++) { data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; progress("self-play " + (g + 1) + "/" + gpi); await sleep(0); }
+      if (!running) break;
+      var loss = 0, nb = 0;
+      for (var i = 0; i < data.length && running; i += TRAIN_CHUNK) { loss += train(net, data.slice(i, i + TRAIN_CHUNK), EPOCHS, LR, rng); nb++; progress("training " + Math.min(i + TRAIN_CHUNK, data.length) + "/" + data.length); await sleep(0); }
+      if (!running) break;
+      iter++; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
+      log("iter " + iter + ": " + data.length + " samples, loss " + lastLoss.toFixed(3));
+      if (iter % EVAL_EVERY === 0) { progress("evaluating…"); await sleep(0); lastEval = evalVsRandom(net, EVAL, rng); showStats(); log("vs random: " + (100 * lastEval).toFixed(1) + "%"); }
+      if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
+    }
+    progress("");
+  }
+
+  async function start() {
+    if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
+    token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
+    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
+    if (token) localStorage.setItem("cz_token", token);
+    setRunning(true); startTime = Date.now(); gamesSession = 0;
+
+    // resume from whichever is newer: local or GitHub
+    var localO = loadLocalObj();
+    var remoteO = null;
+    if (token) { progress("checking GitHub…"); try { remoteO = await pullNet(); log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
+    var best = null;
+    if (localO && remoteO) best = (remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO;
+    else best = localO || remoteO;
+    if (best) { net = netFromObj(best); iter = best.iter || 0; log("resuming at iter " + iter); }
+    else { net = freshNet(HID); iter = 0; log("fresh net (hidden " + HID + ")"); }
+    render(); showStats(); progress("");
+    if (!running) return;
+    log("training started"); trainLoop();
+  }
+  function stop() { setRunning(false); progress(""); if (token) { pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); }); } log("stopped (saved at iter " + iter + ")"); }
+  function exportNet() {
+    try { var a = document.createElement("a"); a.href = "data:application/json;base64," + b64(JSON.stringify(netToObj(net, iter))); a.download = "cribbage-zero-net-iter" + iter + ".json"; document.body.appendChild(a); a.click(); a.remove(); log("exported net iter " + iter); }
+    catch (e) { log("export failed: " + e.message); }
+  }
+  function reset() { if (running) { log("stop first"); return; } if (!confirm("Discard the trained net and start over?")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; lastEval = null; lastLoss = 0; render(); showStats(); log("net reset to fresh"); }
+
+  // restore config
+  $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
+  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
+  if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
+  if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
+  // show resume point from local (without auto-pulling)
+  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; render(); log("local net at iter " + iter + " (will sync with GitHub on Start)"); }
+  $("start").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+  $("export").addEventListener("click", exportNet);
+  $("reset").addEventListener("click", reset);
+})();
+</script>
+</body>
+</html>
