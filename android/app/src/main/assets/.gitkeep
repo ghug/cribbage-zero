@@ -1,0 +1,3 @@
+# The web app (index.html / trainer.html / play.html / vendor/) is copied here by
+# the :app:syncWebAssets Gradle task from the repo root at build time. Those copies
+# are git-ignored; this file just keeps the assets/ directory present in git.

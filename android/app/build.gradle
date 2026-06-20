@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'dev.cribbage.zero'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "dev.cribbage.zero"      // separate app; installs alongside the game
+        minSdk 26
+        targetSdk 34
+        versionCode 1                          // bump by 1 on every release
+        versionName "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false                // pure-asset WebView app
+            // No signingConfig: CI signs the unsigned release APK with apksigner.
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Build the browser engine bundle, then stage the worker page into the APK assets before every build.
+// worker/az_bundle.js is generated (git-ignored); the assets copies are git-ignored too.
+tasks.register('buildBundle', Exec) {
+    workingDir rootProject.projectDir.parentFile          // cribbage-zero repo root
+    commandLine 'bash', 'engine/build-bundle.sh'
+}
+tasks.register('syncWebAssets', Copy) {
+    dependsOn 'buildBundle'
+    def repoRoot = rootProject.projectDir.parentFile
+    into layout.projectDirectory.dir('src/main/assets')
+    from(repoRoot) {
+        include 'worker.html'
+        include 'worker/**'
+    }
+}
+tasks.named('preBuild') { dependsOn 'syncWebAssets' }

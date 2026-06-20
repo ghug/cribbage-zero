@@ -1,0 +1,6 @@
+// Root build script. The Android Gradle Plugin version is the single thing to bump
+// when you update tooling; it must stay compatible with the Gradle version pinned in
+// gradle/wrapper/gradle-wrapper.properties (AGP 8.5.x ⇄ Gradle 8.7).
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}
