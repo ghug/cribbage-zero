@@ -86,7 +86,7 @@ const API = api.address().port, WEB = stat.address().port;
 
 const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
 
-async function drive(label, disableWorkers) {
+async function drive(label, disableWorkers, stopMode) {
   const before = db._st.shards.length;
   const page = await browser.newPage();
   const errs = [];
@@ -107,19 +107,32 @@ async function drive(label, disableWorkers) {
   const count = parseInt(await page.textContent("#count"), 10);
   check(count >= 2, `[${label}] counter reached ${count} (self-played + posted shards)`);
 
+  const prog = (await page.textContent("#progress")) || "";
+  check(/in progress/.test(prog), `[${label}] in-progress indicator shows ("${prog.trim()}")`);
+
   const logTxt = await page.textContent("#log");
   check(/iter 1445/.test(logTxt), `[${label}] pulled the seeded checkpoint (iter 1445)`);
   if (disableWorkers) check(/main thread/.test(logTxt), `[${label}] fell back to main-thread self-play`);
   check(db._st.shards.length > before, `[${label}] API received ${db._st.shards.length - before} new shards`);
   check(errs.length === 0, `[${label}] no uncaught errors` + (errs.length ? " — " + errs.slice(0, 2).join(" | ") : ""));
 
-  await page.click("#stop");
+  if (stopMode === "wind") {
+    const n = db._st.shards.length;
+    await page.click("#wind");
+    await page.waitForFunction(() => !document.getElementById("start").disabled, null, { timeout: 30000 });  // drained → Start re-enabled
+    const log2 = await page.textContent("#log");
+    check(/winding down/.test(log2) && /stopped/.test(log2), `[${label}] wind-down drained in-flight batches then stopped`);
+    check(db._st.shards.length >= n, `[${label}] wind-down lost no in-flight batches`);
+  } else {
+    await page.click("#stop");
+    await page.waitForFunction(() => !document.getElementById("start").disabled, null, { timeout: 10000 });
+  }
   await page.close();
 }
 
 try {
-  await drive("web-workers", false);   // browser path: multi-core Web Workers
-  await drive("main-thread", true);    // APK path: Workers blocked → main-thread fallback
+  await drive("web-workers", false, "wind");   // browser path: multi-core Web Workers + graceful wind-down
+  await drive("main-thread", true, "stop");    // APK path: Workers blocked → main-thread fallback + hard stop
 } finally {
   await browser.close(); api.close(); stat.close();
 }

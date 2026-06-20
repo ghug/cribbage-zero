@@ -16,10 +16,11 @@
   .row { display:flex; gap:10px; } .row > div { flex:1; }
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
   button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
-  #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; }
+  #start { background:var(--good); color:#10331f; } #wind { background:var(--gold); color:#241f0e; } #stop { background:var(--red); color:#fff; }
   button:disabled { opacity:.4; }
   .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
+  #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
   #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:12px; }
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px;
          padding:10px; height:170px; overflow:auto; white-space:pre-wrap; }
@@ -43,10 +44,12 @@
 
   <div class="btns">
     <button id="start">Start</button>
+    <button id="wind" disabled>Wind down</button>
     <button id="stop" disabled>Stop</button>
   </div>
 
   <div class="counter"><b id="count">0</b><span>iterations pushed</span></div>
+  <div id="progress"></div>
   <div id="stats"></div>
   <div id="log"></div>
   <p class="note">Self-play runs on this device (across CPU threads) and uploads batches to the trainer.
@@ -61,6 +64,7 @@
   var threads = [], running = false, sync = null, pushed = 0, curIter = -1, workerId = null;
   var wakeLock = null, sampleCount = 0, startTime = 0, refreshTimer = null, statsTimer = null;
   var curNet = null, curSims = 20, curGames = 10, mainMode = false, gotBatch = false;
+  var winding = false, inFlight = 0;             // inFlight = batches currently being self-played
   var rng = (typeof makeRng === "function") ? makeRng((Date.now() ^ 0x5bd1e995) >>> 0) : null;
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
@@ -70,7 +74,14 @@
     if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000);
   }
   function render() { $("count").textContent = pushed; }
-  function setRunning(on) { running = on; $("start").disabled = on; $("stop").disabled = !on; }
+  function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
+  function setRunning(on) { running = on; updateButtons(); }
+  function renderProgress() {
+    var el = $("progress");
+    if (!running) { el.textContent = ""; return; }
+    var b = inFlight < 0 ? 0 : inFlight;
+    el.textContent = (winding ? "winding down — " : "self-playing: ") + b + " batch" + (b === 1 ? "" : "es") + " in progress";
+  }
   function wid() { var w = localStorage.getItem("az_wid"); if (!w) { w = "dev-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("az_wid", w); } return w; }
   function nThreads() { var v = parseInt($("threads").value, 10); return Math.max(1, Math.min(16, v || 1)); }
 
@@ -89,9 +100,12 @@
   async function onBatch(e, w) {
     if (!e.data || e.data.type !== "batch" || !running) return;
     gotBatch = true;                              // Web Workers work here → no main-thread fallback
+    inFlight--;                                   // this batch finished computing
     try { await sync.putShard(e.data.samples, workerId); pushed++; sampleCount += e.data.samples.length; render(); }
     catch (err) { log("push failed: " + err.message + " — retrying"); }
-    if (running) w.postMessage({ type: "next" });
+    if (running && !winding) { w.postMessage({ type: "next" }); inFlight++; }   // launch the next (unless winding down)
+    renderProgress();
+    if (winding && inFlight <= 0) finalizeStop();  // drained → stop
   }
   // Android WebView can't load a Web Worker from a file:// page; if they fail, self-play on the main thread.
   function onWorkerFail() {
@@ -99,17 +113,22 @@
     mainMode = true;
     log("Web Workers unavailable here — self-playing on the main thread");
     threads.forEach(function (w) { try { w.terminate(); } catch (e) {} }); threads = [];
+    inFlight = 0;
     if (!rng && typeof makeRng === "function") rng = makeRng((Date.now() ^ 0x5bd1e995) >>> 0);
     mainLoop();
   }
   async function mainLoop() {
-    while (running) {
+    while (running && !winding) {                 // wind-down: finish the current batch, then exit
+      inFlight = 1; renderProgress();
       var samples = [];
       for (var g = 0; g < curGames && running; g++) { samples = samples.concat(selfPlay(curNet, curSims, 1.5, rng)); await sleep(0); }
+      inFlight = 0;
       if (!running) break;
       try { await sync.putShard(samples, workerId); pushed++; sampleCount += samples.length; render(); }
       catch (err) { log("push failed: " + err.message); await sleep(1000); }
+      renderProgress();
     }
+    if (running && winding) finalizeStop();
   }
   async function refreshCkpt() {
     if (!running) return;
@@ -141,7 +160,7 @@
     curIter = ck.iter; curNet = netFromObj(ck.net); curSims = sims; curGames = games;
     log("got checkpoint iter " + curIter + " — self-playing");
     acquireWake();
-    gotBatch = false; mainMode = false;
+    gotBatch = false; mainMode = false; winding = false; inFlight = 0; updateButtons();
     for (var i = 0; i < n; i++) {
       try {
         var w = new Worker("worker/az_worker_thread.js");
@@ -149,21 +168,32 @@
         w.onerror = function () { onWorkerFail(); };   // file:// (APK) → fall back to the main thread
         w.postMessage({ type: "ckpt", obj: ck.net });
         w.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
-        threads.push(w);
+        threads.push(w); inFlight++;
       } catch (e2) { onWorkerFail(); break; }
     }
+    renderProgress();
     refreshTimer = setInterval(refreshCkpt, 20000);
     statsTimer = setInterval(updateStats, 8000);
   }
-  function stop() {
-    setRunning(false);
+  function finalizeStop() {
+    if (!running) return;                          // idempotent
+    running = false; winding = false; inFlight = 0;
     threads.forEach(function (w) { try { w.postMessage({ type: "stop" }); w.terminate(); } catch (e) {} });
     threads = [];
     clearInterval(refreshTimer); clearInterval(statsTimer); releaseWake();
+    updateButtons(); renderProgress();
     log("stopped");
   }
+  function windDown() {                            // stop launching new batches; let in-flight ones finish + upload
+    if (!running || winding) return;
+    winding = true; updateButtons(); renderProgress();
+    log("winding down — finishing " + (inFlight < 0 ? 0 : inFlight) + " batch(es) in progress, launching no more");
+    if (inFlight <= 0) finalizeStop();
+  }
+  function stop() { finalizeStop(); }              // hard stop (discards in-flight batches)
 
   $("start").addEventListener("click", start);
+  $("wind").addEventListener("click", windDown);
   $("stop").addEventListener("click", stop);
 })();
 </script>
