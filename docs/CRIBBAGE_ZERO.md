@@ -97,8 +97,12 @@ node engine/az_parallel.js 4 120 20 40     # 4 workers + trainer on local files,
 node engine/az_net.js                      # core self-tests
 ```
 
-## 7. Releasing the APK / versioning
-Publish a GitHub Release with a `vX.Y.Z` tag (or use the web UI) — the `Worker APK Release`
-workflow builds + signs the APK and attaches it. **Bump the patch number only** (`0.1.0 → 0.1.1 → …`);
-do **not** advance the minor or major version unless explicitly asked. Bump `versionCode` by 1 and
-`versionName` to match in `android/app/build.gradle` for each release, using the **same** keystore.
+## 7. Branches & releasing
+**All work lands on `dev`; `main` is the release snapshot.** Day-to-day commits push to `dev` and do
+**not** cut a release. Only on an explicit release request: merge `dev` → `main`, then publish a GitHub
+Release with a `vX.Y.Z` tag — the `Worker APK Release` workflow builds + signs the APK. The scheduled
+trainer and other Actions run from `main`, so changes go live only on release.
+
+**Bump the patch number only** (`0.1.0 → 0.1.1 → …`); do **not** advance the minor or major version
+unless explicitly asked. Bump `versionCode` by 1 and `versionName` to match in `android/app/build.gradle`,
+using the **same** keystore.
