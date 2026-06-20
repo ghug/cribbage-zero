@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Cribbage Zero</title></head>
+<body>
+<!-- Routes to the saved mode: on-device trainer (default) or Cloudflare worker. -->
+<script>location.replace(localStorage.getItem("cz_mode") === "worker" ? "worker.html" : "local.html");</script>
+</body>
+</html>

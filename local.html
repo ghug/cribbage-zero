@@ -31,6 +31,7 @@
 <div class="wrap">
   <h1>♣ Cribbage Zero — Trainer</h1>
   <p class="sub">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
+  <p style="margin:-10px 0 14px;"><span id="tomode" class="reset">⇄ Use Cloudflare worker mode instead</span></p>
 
   <label for="token">GitHub token (Contents: write)</label>
   <input id="token" type="password" placeholder="ghp_… — leave blank to train only on-device" autocapitalize="off" autocorrect="off" />
@@ -170,6 +171,7 @@
   $("stop").addEventListener("click", stop);
   $("export").addEventListener("click", exportNet);
   $("reset").addEventListener("click", reset);
+  $("tomode").addEventListener("click", function () { if (running) { log("stop first"); return; } localStorage.setItem("cz_mode", "worker"); location.href = "worker.html"; });
 })();
 </script>
 </body>

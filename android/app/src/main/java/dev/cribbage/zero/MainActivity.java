@@ -82,7 +82,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
         } else {
-            web.loadUrl("file:///android_asset/local.html");
+            web.loadUrl("file:///android_asset/index.html");   // routes to the saved mode (trainer / worker)
         }
 
         setContentView(web);

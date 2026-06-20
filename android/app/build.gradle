@@ -10,8 +10,8 @@ android {
         applicationId "dev.cribbage.zero"      // separate app; installs alongside the game
         minSdk 26
         targetSdk 34
-        versionCode 5                          // bump by 1 on every release
-        versionName "0.1.4"
+        versionCode 6                          // bump by 1 on every release
+        versionName "0.1.5"
     }
 
     buildTypes {
@@ -38,8 +38,9 @@ tasks.register('syncWebAssets', Copy) {
     def repoRoot = rootProject.projectDir.parentFile
     into layout.projectDirectory.dir('src/main/assets')
     from(repoRoot) {
-        include 'local.html'      // the on-device trainer (the app's page)
-        include 'worker.html'     // distributed worker (also bundled, for completeness)
+        include 'index.html'      // mode router (trainer / worker)
+        include 'local.html'      // on-device trainer (default mode)
+        include 'worker.html'     // Cloudflare worker mode
         include 'worker/**'
     }
 }
