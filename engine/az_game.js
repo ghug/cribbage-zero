@@ -39,6 +39,9 @@ class CribGame {
     this.six = [null, null];
     this.six[this.dealer] = this._draw(6); this.six[this.pone] = this._draw(6);
     this.kept = [null, null]; this.crib = []; this.starter = null;
+    // clear last hand's pegging context so the new discard phase encodes/determinizes with none lingering
+    this._count = 0; this._pile = []; this._played = []; this._playedSuited = []; this._pegHand = undefined;
+    this._goLow = [0, 0]; this._pegPasses = 0; this._pegLast = -1;
     this.phase = "discard"; this.toAct = this.pone;          // pone discards first, then dealer
   }
   // ----- the public decision view -----
@@ -69,7 +72,7 @@ class CribGame {
     // pegging — slot indexes the current hand
     const me = this.toAct, hand = this._pegHand[me], card = hand[slot];
     hand.splice(slot, 1);
-    this._pile.push(card.r); this._played.push(card.r); this._count += pval(card.r);
+    this._pile.push(card.r); this._played.push(card.r); this._playedSuited.push(card); this._count += pval(card.r);
     if (this._award(me, pegScore(this._pile, this._count))) return;
     this._pegLast = me; this._pegPasses = 0;
     if (this._count === 31) { this._count = 0; this._pile = []; this._pegLast = -1; }
@@ -80,7 +83,7 @@ class CribGame {
     if (this.starter.r === 11) { if (this._award(this.dealer, 2)) return; }   // his heels
     this.phase = "peg";
     this._pegHand = [this.kept[0].slice(), this.kept[1].slice()];
-    this._count = 0; this._pile = []; this._played = []; this._pegPasses = 0; this._pegLast = -1; this._goLow = [0, 0];
+    this._count = 0; this._pile = []; this._played = []; this._playedSuited = []; this._pegPasses = 0; this._pegLast = -1; this._goLow = [0, 0];
     this.toAct = this.pone;
     this._advancePeg(true);
   }
@@ -133,13 +136,32 @@ class CribGame {
     f.push((this._count || 0) / 31, this.phase === "peg" ? this._pegHand[player].length / 4 : 0, this.phase === "peg" ? this._pegHand[opp].length / 4 : 0);
     // lowest count the OPPONENT said "go" this hand (reveals they hold no card ≤ 31 - count)
     f.push(((this._goLow && this._goLow[opp]) || 0) / 31);
-    // current pegging sequence: the last 6 cards by rank one-hot (6th-most-recent .. most-recent), so the
-    // net can see runs / pairs / 15-makers forming, not just the top card.
-    const pile = (this.phase === "peg" && this._pile) ? this._pile : [];
-    const last6 = pile.slice(-6), off = 6 - last6.length;
+    // every card PLAYED this hand, in order (rank one-hot + suit one-hot), last-6 window (oldest..newest).
+    // ≤6 cards are on the table at any real decision (7+ ⇒ your last card is forced), so the window never
+    // truncates a decision. Suits are kept: they feed the show's flushes, so they bear on the result.
+    const played = (this.phase === "peg" && this._playedSuited) ? this._playedSuited : [];
+    const last6 = played.slice(-6), off = 6 - last6.length;
     for (let p = 0; p < 6; p++) {
-      const r = p >= off ? last6[p - off] : 0;
-      const rr = new Array(13).fill(0); if (r) rr[r - 1] = 1; for (const x of rr) f.push(x);
+      const c = p >= off ? last6[p - off] : null;
+      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
+      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
+      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
+    }
+    // live-pile mask: which of those 6 slots are in the CURRENT sub-pile (the rest are pre-reset, can't
+    // score). The current pile is the trailing `_pile.length` of the played sequence (it's a suffix).
+    const pileLen = (this.phase === "peg" && this._pile) ? Math.min(this._pile.length, 6) : 0;
+    for (let p = 0; p < 6; p++) f.push(p >= 6 - pileLen ? 1 : 0);
+    // my own two discards (rank one-hot + suit one-hot) — known to me, sitting in the crib (→ crib flush).
+    let disc = [];
+    if (this.phase === "peg" && this.six && this.six[player] && this.kept[player]) {
+      const kept = this.kept[player];
+      disc = this.six[player].filter((c) => kept.indexOf(c) === -1);
+    }
+    for (let p = 0; p < 2; p++) {
+      const c = disc[p];
+      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
+      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
+      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
     }
     // starter (rank + suit), known after the cut
     const sr = new Array(13).fill(0), ssr = new Array(4).fill(0);
@@ -147,7 +169,7 @@ class CribGame {
     for (const x of sr) f.push(x); for (const x of ssr) f.push(x);
     return f;
   }
-  static get INPUT_DIM() { return 6 * 17 + 3 + 2 + 3 + 1 + 6 * 13 + 17; }   // 206: hand(6×17) + phase2/dealer1 + scores2 + peg3 + go1 + pile(6×13) + starter(17)
+  static get INPUT_DIM() { return 6 * 17 + 3 + 2 + 3 + 1 + 6 * 17 + 6 + 2 * 17 + 17; }   // 270: hand(6×17) + phase2/dealer1 + scores2 + peg3 + go1 + played(6×17) + livemask6 + discards(2×17) + starter(17)
   static get NPOL() { return NPOL; }
 
   // clone with the opponent's hidden cards resampled from the unseen pool (for IS-MCTS determinization)
@@ -159,7 +181,7 @@ class CribGame {
     const mine = g.phase === "discard" ? g.six[player] : g.kept[player];
     for (const c of mine) seen.add(cardId(c));
     if (g.starter) seen.add(cardId(g.starter));
-    if (g._played) for (const r of g._played) { /* ranks only; can't pin suit — leave in pool */ }
+    if (g._playedSuited) for (const c of g._playedSuited) seen.add(cardId(c));   // played cards are face-up — pin them out of the resample pool
     const pool = [];
     for (let r = 1; r <= 13; r++) for (let s = 0; s < 4; s++) { const c = { r, s }; if (!seen.has(cardId(c))) pool.push(c); }
     for (let i = pool.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
@@ -178,6 +200,7 @@ class CribGame {
     g._pegHand = this._pegHand ? this._pegHand.map((h) => h.slice()) : undefined;
     g._count = this._count; g._pile = this._pile ? this._pile.slice() : this._pile;
     g._played = this._played ? this._played.slice() : this._played;
+    g._playedSuited = this._playedSuited ? this._playedSuited.slice() : this._playedSuited;
     g._pegPasses = this._pegPasses; g._pegLast = this._pegLast; g._deck = this._deck ? this._deck.slice() : this._deck;
     g._goLow = this._goLow ? this._goLow.slice() : this._goLow;
     return g;
