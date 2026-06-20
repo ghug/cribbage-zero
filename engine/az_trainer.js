@@ -21,6 +21,7 @@ const IDLE = (parseInt(process.argv[3], 10) || 20) * 1000;
 const DO_EVAL = process.argv.includes("--eval");
 const REMOTE = process.argv.includes("--remote");
 const ONCE = process.argv.includes("--once");
+const SEED = (() => { const i = process.argv.indexOf("--seed"); return i >= 0 ? process.argv[i + 1] : null; })();   // initial net for an empty D1
 const LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20, LIMIT = 200;
 const CKPT = path.join(__dirname, "az_checkpoint.json");
 const DATA = path.join(__dirname, "az_data");
@@ -37,7 +38,12 @@ if (REMOTE) {
     let net, iter;
     const cur = await sync.getCheckpoint();
     if (cur && cur.net) { net = netFromObj(cur.net); iter = cur.iter; console.log(`[trainer] resuming @ iter ${iter} (hidden ${net.nHid})`); }
-    else { net = freshNet(HID); iter = 0; await sync.putCheckpoint(netToObj(net, iter)); console.log(`[trainer] seeded fresh net (hidden ${HID})`); }
+    else if (SEED && fs.existsSync(SEED)) {
+      const seed = JSON.parse(fs.readFileSync(SEED, "utf8"));
+      net = netFromObj(seed); iter = seed.iter || 0;
+      await sync.putCheckpoint(netToObj(net, iter));
+      console.log(`[trainer] seeded D1 from ${SEED} @ iter ${iter} (hidden ${net.nHid}) — continuing prior training`);
+    } else { net = freshNet(HID); iter = 0; await sync.putCheckpoint(netToObj(net, iter)); console.log(`[trainer] seeded fresh net (hidden ${HID})`); }
     const t0 = Date.now(); let lastData = Date.now(), consumed = 0;
     for (;;) {
       const { shards } = await sync.getShards(LIMIT);
