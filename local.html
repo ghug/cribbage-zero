@@ -90,6 +90,8 @@
     <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
     <label for="graphEvery">Graph point every (games)</label>
     <input id="graphEvery" type="number" min="1" value="10000" />
+    <label for="effort">CPU effort % (lower = cooler &amp; slower; adjustable live)</label>
+    <input id="effort" type="number" min="10" max="100" value="100" />
     <button class="done full" id="tomode" type="button">⇄ Switch to Cloudflare worker mode</button>
     <button class="done full" id="openAbout" type="button">About Cribbage Zero</button>
   </div>
@@ -120,6 +122,9 @@
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, GRAPH_EVERY = 1000000, graph = [];
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  function effortPct() { return Math.max(10, Math.min(100, parseInt($("effort").value, 10) || 100)); }
+  // duty-cycle throttle: after a unit of work that took `dt`, rest so the CPU runs at ~effort% (read live)
+  async function throttle(t0) { var e = effortPct(); await sleep(e < 100 ? (Date.now() - t0) * (100 / e - 1) : 0); }
 
   function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000); }
   function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
@@ -183,10 +188,10 @@
     var sims = parseInt($("sims").value, 10) || 20, gpi = parseInt($("games").value, 10) || 40;
     while (running && !winding) {                  // wind-down: finish the current iteration, then stop
       var data = [];
-      for (var g = 0; g < gpi && running; g++) { data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; progress("self-play " + (g + 1) + "/" + gpi); await sleep(0); }
+      for (var g = 0; g < gpi && running; g++) { var gt = Date.now(); data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; progress("self-play " + (g + 1) + "/" + gpi + (effortPct() < 100 ? " · " + effortPct() + "% effort" : "")); await throttle(gt); }
       if (!running) break;
       var loss = 0, nb = 0;
-      for (var i = 0; i < data.length && running; i += TRAIN_CHUNK) { loss += train(net, data.slice(i, i + TRAIN_CHUNK), EPOCHS, LR, rng); nb++; progress("training " + Math.min(i + TRAIN_CHUNK, data.length) + "/" + data.length); await sleep(0); }
+      for (var i = 0; i < data.length && running; i += TRAIN_CHUNK) { var tt = Date.now(); loss += train(net, data.slice(i, i + TRAIN_CHUNK), EPOCHS, LR, rng); nb++; progress("training " + Math.min(i + TRAIN_CHUNK, data.length) + "/" + data.length); await throttle(tt); }
       if (!running) break;
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
@@ -246,6 +251,8 @@
   var _ge = localStorage.getItem("cz_graphEvery"); if (_ge && _ge !== "1000000") $("graphEvery").value = _ge;   // "1000000" was the old default → fall through to the new 10000
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
+  if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
+  $("effort").addEventListener("change", function () { localStorage.setItem("cz_effort", $("effort").value); });
   var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; graph = Array.isArray(lo.graph) ? lo.graph : []; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
   $("start").addEventListener("click", start);
   $("wind").addEventListener("click", windDown);
