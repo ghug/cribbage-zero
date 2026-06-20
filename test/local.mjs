@@ -43,7 +43,16 @@ try {
 
   await page.goto(`http://localhost:${WEB}/local.html`);
   check(await page.$("#start") !== null, "local.html loaded");
+
+  // token + repo + graph-interval live in the Settings modal now
+  await page.click("#gear");
+  check(await page.isVisible("#token"), "settings modal opens with token/repo");
   await page.fill("#token", "");          // blank → fully local, no pushing
+  await page.fill("#repo", "ghug/cribbage-zero");
+  await page.fill("#graphEvery", "4");    // tiny so a graph point lands quickly
+  await page.click("#settingsDone");
+  check(!(await page.isVisible("#token")), "settings modal closes");
+
   await page.fill("#games", "2");
   await page.fill("#sims", "8");
   await page.fill("#push", "999");
@@ -53,6 +62,12 @@ try {
   await page.waitForFunction(() => parseInt(document.getElementById("count").textContent.replace(/[^0-9]/g, ""), 10) >= 2, null, { timeout: 90000 });
   const games = N(await page.textContent("#count"));
   check(games >= 2, `headline shows ${games} games trained (games, not iters)`);
+
+  // a graph point should accumulate once games cross the interval (4)
+  await page.waitForFunction(() => { const o = JSON.parse(localStorage.getItem("cz_local_ckpt") || "null"); return o && Array.isArray(o.graph) && o.graph.length >= 1; }, null, { timeout: 90000 });
+  const pt = await page.evaluate(() => JSON.parse(localStorage.getItem("cz_local_ckpt")).graph[0]);
+  check(typeof pt.g === "number" && typeof pt.p === "number", `graph point recorded (g=${pt.g}, p=${pt.p}%)`);
+
   const log = await page.textContent("#log");
   check(/loss/.test(log), "training logged a loss");
   await page.click("#wind");   // graceful: finish the current iteration, then stop
@@ -62,11 +77,18 @@ try {
   const saved = await page.evaluate(() => { const o = JSON.parse(localStorage.getItem("cz_local_ckpt") || "null"); return o && Array.isArray(o.W1) && typeof o.games === "number" ? o.games : -1; });
   check(saved >= 2, `cumulative games persisted to the checkpoint (games ${saved})`);
 
-  // resume: reload and confirm the games headline persists
+  // resume: reload and confirm the games headline + graph persist
   await page.reload();
   await page.waitForFunction(() => parseInt(document.getElementById("count").textContent.replace(/[^0-9]/g, ""), 10) >= 2, null, { timeout: 10000 });
   const resumed = N(await page.textContent("#count"));
   check(resumed === saved, `resumed games headline ${resumed} (saved ${saved})`);
+  const graphLen = await page.evaluate(() => JSON.parse(localStorage.getItem("cz_local_ckpt")).graph.length);
+  check(graphLen >= 1, `graph persisted across reload (${graphLen} points)`);
+
+  // about modal opens
+  await page.click("#aboutBtn");
+  check(await page.isVisible("#ver"), "about modal opens");
+  await page.click("#aboutDone");
 
   check(errs.length === 0, "no uncaught errors / no GitHub calls" + (errs.length ? " — " + errs.slice(0, 2).join(" | ") : ""));
 } finally {

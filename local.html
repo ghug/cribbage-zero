@@ -10,33 +10,50 @@
   body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
          font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
   .wrap { max-width:460px; margin:0 auto; }
-  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 18px; }
+  .hdr { display:flex; align-items:center; gap:8px; }
+  .hdr h1 { flex:1; font-size:20px; margin:6px 0 2px; }
+  .icon { flex:0 0 auto; width:38px; height:38px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.25); color:var(--ink); font-size:18px; line-height:1; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .sub { color:var(--mut); font-size:13px; margin:0 0 6px; }
   label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
   input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
   .row { display:flex; gap:10px; } .row > div { flex:1; }
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
-  button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
+  button.act { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
   #start { background:var(--good); color:#10331f; } #wind { background:var(--gold); color:#241f0e; } #stop { background:var(--red); color:#fff; }
   button:disabled { opacity:.4; }
   .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
   #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
-  #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:12px; }
-  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:150px; overflow:auto; white-space:pre-wrap; }
+  #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:10px; }
+  .graph { background:rgba(0,0,0,.22); border:1px solid var(--line); border-radius:12px; margin:0 0 12px; padding:0 12px; }
+  .graph > summary { list-style:none; cursor:pointer; padding:11px 0; color:var(--mut); font:12px ui-monospace,Menlo,monospace; }
+  .graph > summary::-webkit-details-marker { display:none; }
+  .graph > summary::after { content:"\25B8"; float:right; color:var(--mut); }
+  .graph[open] > summary::after { content:"\25BE"; }
+  .graph canvas { width:100%; height:auto; display:block; padding-bottom:10px; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:140px; overflow:auto; white-space:pre-wrap; }
   .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
   .reset { color:var(--mut); font-size:12px; text-decoration:underline; cursor:pointer; }
+  .overlay { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.62); padding:20px; display:none; align-items:center; justify-content:center; }
+  .overlay.open { display:flex; }
+  .modal { max-width:400px; width:100%; background:var(--bg2); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:0 14px 44px rgba(0,0,0,.55); max-height:85vh; overflow:auto; }
+  .modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .modal-head h2 { margin:0; font-size:18px; }
+  .done { padding:8px 14px; border-radius:9px; border:1px solid var(--line); background:rgba(0,0,0,.22); color:var(--ink); cursor:pointer; font:inherit; }
+  .modal p { color:var(--mut); font-size:13px; line-height:1.6; margin:10px 0; } .modal a { color:var(--gold); }
+  .modal .full { display:block; width:100%; margin-top:14px; text-align:center; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>♣ Cribbage Zero — Trainer</h1>
+  <div class="hdr">
+    <h1>♣ Cribbage Zero — Trainer</h1>
+    <button id="gear" class="icon" type="button" aria-label="Settings">⚙</button>
+    <button id="aboutBtn" class="icon" type="button" aria-label="About">ⓘ</button>
+  </div>
   <p class="sub">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
-  <p style="margin:-10px 0 14px;"><span id="tomode" class="reset">⇄ Use Cloudflare worker mode instead</span></p>
+  <p style="margin:0 0 14px;"><span id="tomode" class="reset">⇄ Use Cloudflare worker mode instead</span></p>
 
-  <label for="token">GitHub token (Contents: write)</label>
-  <input id="token" type="password" placeholder="ghp_… — leave blank to train only on-device" autocapitalize="off" autocorrect="off" />
-  <label for="repo">Repo (owner/name)</label>
-  <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
   <div class="row">
     <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
     <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="20" /></div>
@@ -44,18 +61,50 @@
   </div>
 
   <div class="btns">
-    <button id="start">Start</button>
-    <button id="wind" disabled>Wind down</button>
-    <button id="stop" disabled>Stop</button>
+    <button id="start" class="act">Start</button>
+    <button id="wind" class="act" disabled>Wind down</button>
+    <button id="stop" class="act" disabled>Stop</button>
   </div>
 
   <div class="counter"><b id="count">0</b><span>games trained</span></div>
   <div id="progress"></div>
   <div id="stats"></div>
+  <details class="graph" id="graphBox">
+    <summary>Strength vs random — % over games played</summary>
+    <canvas id="chart" width="440" height="170"></canvas>
+  </details>
   <div id="log"></div>
-  <p class="note">Each iteration: self-play games, then SGD-train on them. The net is saved on this device
-  every iteration and pushed to the GitHub <b>net</b> branch every few iters (a single force-updated commit
-  — no history bloat). On Start it resumes from whichever is newer, local or GitHub. <span id="reset" class="reset">Reset net</span>.</p>
+  <p class="note">Each iteration: self-play games, then SGD-train on them. Progress is saved on this device
+  every iteration and pushed to the GitHub <b>net</b> branch. On Start it resumes from whichever is newer,
+  local or GitHub. <span id="reset" class="reset">Reset net</span>.</p>
+</div>
+
+<!-- Settings modal -->
+<div class="overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-label="Settings">
+  <div class="modal">
+    <div class="modal-head"><h2>Settings</h2><button class="done" id="settingsDone" type="button">Done</button></div>
+    <label for="token">GitHub token (Contents: write)</label>
+    <input id="token" type="password" placeholder="ghp_… — leave blank to train only" autocapitalize="off" autocorrect="off" />
+    <label for="repo">Repo (owner/name)</label>
+    <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
+    <label for="graphEvery">Graph point every (games)</label>
+    <input id="graphEvery" type="number" min="1" value="1000000" />
+    <button class="done full" id="openAbout" type="button">About Cribbage Zero</button>
+  </div>
+</div>
+
+<!-- About modal -->
+<div class="overlay" id="aboutOverlay" role="dialog" aria-modal="true" aria-label="About">
+  <div class="modal">
+    <div class="modal-head"><h2>About</h2><button class="done" id="aboutDone" type="button">Done</button></div>
+    <p>An open-source, from-scratch <b>AlphaZero-style</b> cribbage trainer. This device plays cribbage
+    against itself and learns from it — a neural network guided by Monte-Carlo Tree Search (MCTS) — then
+    saves the trained network to GitHub.</p>
+    <p>Two modes (toggle on the main screen): this <b>on-device trainer</b>, or a <b>Cloudflare worker</b>
+    that contributes self-play to a shared bus. The net is force-pushed to the repo's <b>net</b> branch.</p>
+    <p>Version <span id="ver">0.1.7</span> · public domain (The Unlicense).</p>
+    <p><a id="repoLink" href="https://github.com/ghug/cribbage-zero" target="_blank" rel="noopener noreferrer">Source, bugs &amp; feedback ↗</a></p>
+  </div>
 </div>
 
 <script src="worker/az_bundle.js"></script><!-- selfPlay, train, freshNet, netToObj/netFromObj, evalVsRandom, makeRng -->
@@ -65,7 +114,7 @@
   var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
-  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
+  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, GRAPH_EVERY = 1000000, graph = [];
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
@@ -73,7 +122,7 @@
   function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
   function setRunning(on) { running = on; updateButtons(); }
   function render() { $("count").textContent = totalGames.toLocaleString(); }
-  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; return o; }   // checkpoint = net + cumulative games
+  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; o.graph = graph; return o; }   // checkpoint = net + games + graph
   function showStats() {
     var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
     var s = "iter " + iter + " · loss " + (lastLoss ? lastLoss.toFixed(3) : "—") + " · ~" + gps.toFixed(1) + " games/s";
@@ -82,12 +131,23 @@
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
 
-  // a well-formed checkpoint: right hidden size and full weight matrices (guards against junk on the branch)
-  function validCkpt(o) {
-    return o && o.nHid === HID && Array.isArray(o.W1) && Array.isArray(o.W1[0]) && o.W1[0].length === o.nHid
-      && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp);
+  // --- strength-vs-games chart ---
+  function drawGraph() {
+    var c = $("chart"); if (!c || !c.getContext) return;
+    var ctx = c.getContext("2d"), W = c.width, H = c.height, pad = 30; ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(47,107,77,0.5)"; ctx.fillStyle = "#a9c4b3"; ctx.font = "10px monospace"; ctx.lineWidth = 1;
+    [0, 25, 50, 75, 100].forEach(function (v) { var y = H - pad - (v / 100) * (H - pad - 8); ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 6, y); ctx.stroke(); ctx.fillText(v + "%", 4, y + 3); });
+    if (!graph.length) { ctx.fillText("no data yet — first point at " + GRAPH_EVERY.toLocaleString() + " games", pad + 6, H / 2); return; }
+    var maxG = graph[graph.length - 1].g || 1;
+    var X = function (g) { return pad + (maxG ? g / maxG : 0) * (W - 6 - pad); }, Y = function (p) { return H - pad - (p / 100) * (H - pad - 8); };
+    ctx.strokeStyle = "#d6bc7a"; ctx.lineWidth = 2; ctx.beginPath();
+    graph.forEach(function (pt, i) { var x = X(pt.g), y = Y(pt.p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    ctx.fillStyle = "#f3ecd6"; graph.forEach(function (pt) { ctx.beginPath(); ctx.arc(X(pt.g), Y(pt.p), 2.5, 0, 7); ctx.fill(); });
+    ctx.fillStyle = "#a9c4b3"; ctx.fillText(maxG.toLocaleString() + " games", W - 92, H - 8);
   }
+
   // --- local persistence ---
+  function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && Array.isArray(o.W1[0]) && o.W1[0].length === o.nHid && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
   function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(o)) return o; } catch (e) {} return null; }
   function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(ckObj())); } catch (e) { log("local save failed: " + e.message); } }
 
@@ -95,22 +155,17 @@
   function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
   function unb64(s) { return decodeURIComponent(escape(atob(s))); }
   async function gh(method, path, body) {
-    var res = await fetch("https://api.github.com" + path, { method: method,
-      headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" },
-      body: body ? JSON.stringify(body) : undefined });
+    var res = await fetch("https://api.github.com" + path, { method: method, headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" }, body: body ? JSON.stringify(body) : undefined });
     var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
     if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
     return { status: res.status, body: j };
   }
-  async function pullNet() {
-    try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); }
-    catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
-  }
+  async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
   async function pushNet() {
     var content = b64(JSON.stringify(ckObj()));
     var blob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: content, encoding: "base64" });
     var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.body.sha }] });
-    var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter, tree: tree.body.sha, parents: [] });
+    var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter + " (" + totalGames + " games)", tree: tree.body.sha, parents: [] });
     var ref; try { ref = await gh("GET", "/repos/" + repo + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
     if (ref.status === 200) await gh("PATCH", "/repos/" + repo + "/git/refs/heads/" + BRANCH, { sha: commit.body.sha, force: true });
     else await gh("POST", "/repos/" + repo + "/git/refs", { ref: "refs/heads/" + BRANCH, sha: commit.body.sha });
@@ -128,33 +183,34 @@
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
       if (iter % EVAL_EVERY === 0) { progress("evaluating…"); await sleep(0); lastEval = evalVsRandom(net, EVAL, rng); showStats(); log("vs random: " + (100 * lastEval).toFixed(1) + "%"); }
+      // graph point each time we cross a GRAPH_EVERY milestone (fresh eval so the point is meaningful)
+      var lastG = graph.length ? graph[graph.length - 1].g : 0;
+      if (totalGames - lastG >= GRAPH_EVERY) { progress("evaluating for graph…"); await sleep(0); var pct = +(100 * evalVsRandom(net, EVAL, rng)).toFixed(1); lastEval = pct / 100; graph.push({ g: totalGames, p: pct }); saveLocal(); drawGraph(); showStats(); log("★ graph: " + pct + "% vs random @ " + totalGames.toLocaleString() + " games"); }
       if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
     }
     progress("");
-    if (running && winding) finalizeStop();        // reached the end of the current iteration during wind-down
+    if (running && winding) finalizeStop();
   }
 
   async function start() {
     if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
     token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
-    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
+    GRAPH_EVERY = Math.max(1, parseInt($("graphEvery").value, 10) || 1000000);
+    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_graphEvery", GRAPH_EVERY); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     if (token) localStorage.setItem("cz_token", token);
     setRunning(true); startTime = Date.now(); gamesSession = 0;
 
-    // resume from whichever is newer: local or GitHub
-    var localO = loadLocalObj();
-    var remoteO = null;
+    var localO = loadLocalObj(), remoteO = null;
     if (token) { progress("checking GitHub…"); try { remoteO = await pullNet(); log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
     if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
-    var best = null;
-    if (localO && remoteO) best = (remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO;
-    else best = localO || remoteO;
-    if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
-    else { net = freshNet(HID); iter = 0; totalGames = 0; log("fresh net (hidden " + HID + ")"); }
-    render(); showStats(); progress("");
+    var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
+    if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; graph = Array.isArray(best.graph) ? best.graph : []; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
+    else { net = freshNet(HID); iter = 0; totalGames = 0; graph = []; log("fresh net (hidden " + HID + ")"); }
+    render(); showStats(); drawGraph(); progress("");
     if (!running) return;
     log("training started"); trainLoop();
   }
+
   function finalizeStop() {
     if (!running) return;
     running = false; winding = false; updateButtons(); progress("");
@@ -162,17 +218,26 @@
     if (token) pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); });
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
-  function stop() { finalizeStop(); }              // hard stop (abandons the current iteration's self-play)
-  function reset() { if (running) { log("stop first"); return; } if (!confirm("Discard the trained net and start over?")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; lastEval = null; lastLoss = 0; render(); showStats(); log("net reset to fresh"); }
+  function stop() { finalizeStop(); }
+  function reset() { if (running) { log("stop first"); return; } if (!confirm("Discard the trained net and start over?")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastEval = null; lastLoss = 0; render(); showStats(); drawGraph(); log("net reset to fresh"); }
+
+  // modals
+  function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
+  $("gear").addEventListener("click", function () { open($("settingsOverlay")); });
+  $("settingsDone").addEventListener("click", function () { close($("settingsOverlay")); });
+  $("aboutBtn").addEventListener("click", function () { open($("aboutOverlay")); });
+  $("aboutDone").addEventListener("click", function () { close($("aboutOverlay")); });
+  $("openAbout").addEventListener("click", function () { close($("settingsOverlay")); open($("aboutOverlay")); });
+  $("graphBox").addEventListener("toggle", function () { if ($("graphBox").open) drawGraph(); });
 
   // restore config
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
   if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
+  if (localStorage.getItem("cz_graphEvery")) $("graphEvery").value = localStorage.getItem("cz_graphEvery");
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
-  // show resume point from local (without auto-pulling)
-  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
+  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; graph = Array.isArray(lo.graph) ? lo.graph : []; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
   $("start").addEventListener("click", start);
   $("wind").addEventListener("click", windDown);
   $("stop").addEventListener("click", stop);
