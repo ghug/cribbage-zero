@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Worker</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --red:#c8412b; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:460px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 18px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btns { display:flex; gap:10px; margin:18px 0 8px; }
+  button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
+  #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; }
+  button:disabled { opacity:.4; }
+  .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0; }
+  .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px;
+         padding:10px; height:180px; overflow:auto; white-space:pre-wrap; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Cribbage Zero — Worker</h1>
+  <p class="sub">Contributes self-play games to the shared trainer. Your token stays on this device.</p>
+
+  <label for="api">Data-bus API URL</label>
+  <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.&lt;you&gt;.workers.dev" autocapitalize="off" autocorrect="off" />
+  <label for="tok">Worker token</label>
+  <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
+  <div class="row">
+    <div><label for="games">Games / batch</label><input id="games" type="number" min="1" value="10" /></div>
+    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="20" /></div>
+  </div>
+
+  <div class="btns">
+    <button id="start">Start</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <div class="counter"><b id="count">0</b><span>iterations pushed</span></div>
+  <div id="log"></div>
+  <p class="note">Self-play runs on this device in the background and uploads batches to the trainer. Keep the screen on for best throughput. A token only lets this device append self-play and read the network — it cannot change anyone else's data.</p>
+</div>
+
+<script src="worker/az_bundle.js"></script><!-- provides makeSync() on the main thread -->
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var sync = null, thread = null, running = false, pushed = 0, curIter = -1, workerId = null;
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  function log(msg) {
+    var el = $("log"); var t = new Date().toLocaleTimeString();
+    el.textContent = "[" + t + "] " + msg + "\n" + el.textContent;
+    if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000);
+  }
+  function render() { $("count").textContent = pushed; }
+  function setRunning(on) { running = on; $("start").disabled = on; $("stop").disabled = !on; }
+  function wid() { var w = localStorage.getItem("az_wid"); if (!w) { w = "dev-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("az_wid", w); } return w; }
+
+  // restore saved config
+  $("api").value = localStorage.getItem("az_api") || "";
+  $("tok").value = localStorage.getItem("az_tok") || "";
+  if (localStorage.getItem("az_games")) $("games").value = localStorage.getItem("az_games");
+  if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
+
+  async function onBatch(e) {
+    if (!e.data || e.data.type !== "batch" || !running) return;
+    try { await sync.putShard(e.data.samples, workerId); pushed++; render(); log("pushed shard #" + pushed + " (" + e.data.samples.length + " samples)"); }
+    catch (err) { log("push failed: " + err.message + " — retrying next batch"); }
+    if (running && pushed % 10 === 0) {
+      try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; thread.postMessage({ type: "ckpt", obj: c.net }); log("refreshed net -> iter " + curIter); } } catch (e2) {}
+    }
+    if (running) thread.postMessage({ type: "next" });
+  }
+
+  async function start() {
+    var apiUrl = $("api").value.trim(), token = $("tok").value.trim();
+    if (!apiUrl || !token) { log("enter the API URL and your worker token first"); return; }
+    var sims = parseInt($("sims").value, 10) || 20, games = parseInt($("games").value, 10) || 10;
+    localStorage.setItem("az_api", apiUrl); localStorage.setItem("az_tok", token);
+    localStorage.setItem("az_games", games); localStorage.setItem("az_sims", sims);
+    if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
+    workerId = wid();
+    sync = makeSync({ apiUrl: apiUrl, token: token, workerId: workerId });
+    pushed = 0; render(); setRunning(true); log("starting as " + workerId);
+
+    var ck = null;
+    try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); setRunning(false); return; }
+    while (running && (!ck || !ck.net)) { log("waiting for the trainer's first checkpoint…"); await sleep(3000); try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); } }
+    if (!running) return;
+    curIter = ck.iter; log("got checkpoint iter " + curIter + " — self-playing");
+    thread = new Worker("worker/az_worker_thread.js");
+    thread.onmessage = onBatch;
+    thread.onerror = function (err) { log("worker error: " + (err.message || err)); };
+    thread.postMessage({ type: "ckpt", obj: ck.net });
+    thread.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
+  }
+  function stop() { setRunning(false); if (thread) { try { thread.postMessage({ type: "stop" }); thread.terminate(); } catch (e) {} thread = null; } log("stopped"); }
+
+  $("start").addEventListener("click", start);
+  $("stop").addEventListener("click", stop);
+})();
+</script>
+</body>
+</html>
