@@ -88,7 +88,7 @@
     <label for="repo">Repo (owner/name)</label>
     <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
     <label for="graphEvery">Graph point every (games)</label>
-    <input id="graphEvery" type="number" min="1" value="1000000" />
+    <input id="graphEvery" type="number" min="1" value="10000" />
     <button class="done full" id="openAbout" type="button">About Cribbage Zero</button>
   </div>
 </div>
@@ -112,7 +112,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
-  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
+  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, GRAPH_EVERY = 1000000, graph = [];
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
@@ -162,9 +162,14 @@
   }
   async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
   async function pushNet() {
-    var content = b64(JSON.stringify(ckObj()));
-    var blob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: content, encoding: "base64" });
-    var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.body.sha }] });
+    // net + a separate human-readable progress.json, both in one orphan commit on the net branch
+    var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(ckObj())), encoding: "base64" });
+    var prog = { updated: new Date().toISOString(), games: totalGames, iter: iter, points: graph.map(function (pt) { return { games: pt.g, vsRandomPct: pt.p }; }) };
+    var progBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(prog, null, 1)), encoding: "base64" });
+    var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [
+      { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
+      { path: PROGPATH, mode: "100644", type: "blob", sha: progBlob.body.sha }
+    ] });
     var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter + " (" + totalGames + " games)", tree: tree.body.sha, parents: [] });
     var ref; try { ref = await gh("GET", "/repos/" + repo + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
     if (ref.status === 200) await gh("PATCH", "/repos/" + repo + "/git/refs/heads/" + BRANCH, { sha: commit.body.sha, force: true });
@@ -234,7 +239,7 @@
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
   if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
-  if (localStorage.getItem("cz_graphEvery")) $("graphEvery").value = localStorage.getItem("cz_graphEvery");
+  var _ge = localStorage.getItem("cz_graphEvery"); if (_ge && _ge !== "1000000") $("graphEvery").value = _ge;   // "1000000" was the old default → fall through to the new 10000
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; graph = Array.isArray(lo.graph) ? lo.graph : []; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
