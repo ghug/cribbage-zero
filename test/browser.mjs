@@ -99,16 +99,16 @@ async function drive(label, disableWorkers, stopMode) {
   check(await page.$("#start") !== null, `[${label}] worker.html loaded`);
   await page.fill("#api", `http://localhost:${API}`);
   await page.fill("#tok", "wtok");
-  await page.fill("#games", "2");
+  await page.fill("#upload", "0.05");   // ~3s flush so the test is quick (real default is 5 min)
   await page.fill("#sims", "8");
   await page.click("#start");
 
   await page.waitForFunction(() => parseInt(document.getElementById("count").textContent, 10) >= 2, null, { timeout: 90000 });
   const count = parseInt(await page.textContent("#count"), 10);
-  check(count >= 2, `[${label}] counter reached ${count} (self-played + posted shards)`);
+  check(count >= 2, `[${label}] counter reached ${count} (self-played + uploaded batches)`);
 
   const prog = (await page.textContent("#progress")) || "";
-  check(/in progress/.test(prog), `[${label}] in-progress indicator shows ("${prog.trim()}")`);
+  check(/self-playing/.test(prog), `[${label}] in-progress indicator shows ("${prog.trim()}")`);
 
   const logTxt = await page.textContent("#log");
   check(/iter 1445/.test(logTxt), `[${label}] pulled the seeded checkpoint (iter 1445)`);

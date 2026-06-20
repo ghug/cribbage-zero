@@ -45,7 +45,10 @@ export default {
         if (!body || !Array.isArray(body.samples) || body.samples.length === 0) return json({ error: "bad request" }, 400);
         await env.DB.prepare("INSERT INTO shards (worker_id, created_at, samples) VALUES (?,?,?)")
           .bind(String(body.workerId || "anon").slice(0, 64), Date.now(), JSON.stringify(body.samples)).run();
-        return json({ ok: true });
+        // Piggyback the current trainer iter (one indexed single-row read) so workers never need to poll
+        // /checkpoint or /stats — they fetch the net only when this iter actually advances.
+        const ck = await env.DB.prepare("SELECT iter FROM checkpoint WHERE id=1").first();
+        return json({ ok: true, iter: ck ? ck.iter : 0 });
       }
 
       if (request.method === "GET" && path === "/shards") {

@@ -22,7 +22,7 @@ const DO_EVAL = process.argv.includes("--eval");
 const REMOTE = process.argv.includes("--remote");
 const ONCE = process.argv.includes("--once");
 const SEED = (() => { const i = process.argv.indexOf("--seed"); return i >= 0 ? process.argv[i + 1] : null; })();   // initial net for an empty D1
-const LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20, LIMIT = 200;
+const LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20, LIMIT = 10;   // pull few shards/call (shards are larger now); loop drains
 const CKPT = path.join(__dirname, "az_checkpoint.json");
 const DATA = path.join(__dirname, "az_data");
 const sleep = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {} };

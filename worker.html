@@ -37,7 +37,7 @@
   <label for="tok">Worker token</label>
   <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
   <div class="row">
-    <div><label for="games">Games / batch</label><input id="games" type="number" min="1" value="10" /></div>
+    <div><label for="upload">Upload every (min)</label><input id="upload" type="number" min="0.05" step="0.5" value="5" /></div>
     <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="20" /></div>
     <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
   </div>
@@ -48,11 +48,11 @@
     <button id="stop" disabled>Stop</button>
   </div>
 
-  <div class="counter"><b id="count">0</b><span>iterations pushed</span></div>
+  <div class="counter"><b id="count">0</b><span>uploads pushed</span></div>
   <div id="progress"></div>
   <div id="stats"></div>
   <div id="log"></div>
-  <p class="note">Self-play runs on this device (across CPU threads) and uploads batches to the trainer.
+  <p class="note">Self-play runs on this device and uploads <b>every</b> sample it produces (in chunks).
   The screen is kept awake while running. A token only lets this device append self-play and read the
   network — it cannot change anyone else's data.</p>
 </div>
@@ -62,11 +62,14 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var threads = [], running = false, sync = null, pushed = 0, curIter = -1, workerId = null;
-  var wakeLock = null, sampleCount = 0, startTime = 0, refreshTimer = null, statsTimer = null;
-  var curNet = null, curSims = 20, curGames = 10, mainMode = false, gotBatch = false;
-  var winding = false, inFlight = 0;             // inFlight = batches currently being self-played
+  var wakeLock = null, sampleCount = 0, startTime = 0;
+  var curNet = null, curSims = 20, curCpuct = 1.5, flushMs = 300000, mainMode = false, gotBatch = false;
+  var winding = false, inFlight = 0;
+  var MAX_SAMPLES = 1500;                          // cap shard to ~0.4 MB (well under D1's value-size limit)
   var rng = (typeof makeRng === "function") ? makeRng((Date.now() ^ 0x5bd1e995) >>> 0) : null;
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  function r3(v) { return Math.round(v * 1e3) / 1e3; }
+  function shrink(s) { return s.map(function (x) { return { x: x.x.map(r3), pi: x.pi.map(r3), legal: x.legal, z: r3(x.z) }; }); }
 
   function log(msg) {
     var el = $("log"), t = new Date().toLocaleTimeString();
@@ -76,38 +79,76 @@
   function render() { $("count").textContent = pushed; }
   function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
   function setRunning(on) { running = on; updateButtons(); }
-  function renderProgress() {
-    var el = $("progress");
-    if (!running) { el.textContent = ""; return; }
-    var b = inFlight < 0 ? 0 : inFlight;
-    el.textContent = (winding ? "winding down — " : "self-playing: ") + b + " batch" + (b === 1 ? "" : "es") + " in progress";
-  }
   function wid() { var w = localStorage.getItem("az_wid"); if (!w) { w = "dev-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("az_wid", w); } return w; }
   function nThreads() { var v = parseInt($("threads").value, 10); return Math.max(1, Math.min(16, v || 1)); }
+
+  function renderProgress(batchSamples, batchMs) {
+    var el = $("progress");
+    if (!running) { el.textContent = ""; return; }
+    var pre = winding ? "winding down — " : "self-playing";
+    if (mainMode && typeof batchSamples === "number") el.textContent = pre + (winding ? "" : " —") + " " + batchSamples + " samples this interval · " + Math.round(batchMs / 1000) + "s";
+    else { var b = inFlight < 0 ? 0 : inFlight; el.textContent = (winding ? "winding down — " : "self-playing: ") + b + " batch" + (b === 1 ? "" : "es") + " in progress"; }
+  }
+  function showStats() {
+    var sps = sampleCount / Math.max(1, (Date.now() - startTime) / 1000);
+    $("stats").textContent = "trainer iter " + (curIter < 0 ? "?" : curIter) + " · ~" + sps.toFixed(1) + " samples/s";
+  }
 
   // restore saved config
   $("api").value = localStorage.getItem("az_api") || "";
   $("tok").value = localStorage.getItem("az_tok") || "";
-  if (localStorage.getItem("az_games")) $("games").value = localStorage.getItem("az_games");
+  if (localStorage.getItem("az_upload")) $("upload").value = localStorage.getItem("az_upload");
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
   $("threads").value = localStorage.getItem("az_threads") || Math.min((navigator.hardwareConcurrency || 2), 4);
 
-  // keep the screen on while working (re-acquire when the tab returns to the foreground)
   async function acquireWake() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
   function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
   document.addEventListener("visibilitychange", function () { if (running && document.visibilityState === "visible" && !wakeLock) acquireWake(); });
 
-  async function onBatch(e, w) {
-    if (!e.data || e.data.type !== "batch" || !running) return;
-    gotBatch = true;                              // Web Workers work here → no main-thread fallback
-    inFlight--;                                   // this batch finished computing
-    try { await sync.putShard(e.data.samples, workerId); pushed++; sampleCount += e.data.samples.length; render(); }
-    catch (err) { log("push failed: " + err.message + " — retrying"); }
-    if (running && !winding) { w.postMessage({ type: "next" }); inFlight++; }   // launch the next (unless winding down)
-    renderProgress();
-    if (winding && inFlight <= 0) finalizeStop();  // drained → stop
+  // The one network path while running: upload a batch, and learn the trainer iter from the response —
+  // no periodic /stats or /checkpoint polling. Only re-fetch the net when the iter actually advances.
+  async function flush(samples) {
+    if (!samples || !samples.length) return;
+    try {
+      var r = await sync.putShard(shrink(samples), workerId);   // round floats to shrink the payload
+      pushed++; sampleCount += samples.length; render();
+      if (r && typeof r.iter === "number") {
+        if (r.iter > curIter) await pullCheckpoint();
+        else curIter = r.iter;
+      }
+      showStats();
+    } catch (err) { log("upload failed: " + err.message + " — will retry next batch"); }
   }
-  // Android WebView can't load a Web Worker from a file:// page; if they fail, self-play on the main thread.
+  async function pullCheckpoint() {
+    try {
+      var c = await sync.getCheckpoint();
+      if (c && c.net) { curIter = c.iter; curNet = netFromObj(c.net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: c.net }); }); log("updated to net iter " + curIter); }
+    } catch (e) {}
+  }
+
+  // main-thread self-play (the APK path): keep EVERY sample. Buffer self-play, upload full MAX_SAMPLES
+  // chunks as they fill (D1 caps a shard's size), and flush the remainder each interval. No data dropped.
+  async function mainLoop() {
+    var buf = [], seen = 0, t0 = Date.now();
+    inFlight = 1;
+    while (running && !winding) {
+      var g = selfPlay(curNet, curSims, curCpuct, rng);
+      buf = buf.concat(g); seen += g.length;
+      while (buf.length >= MAX_SAMPLES) await flush(buf.splice(0, MAX_SAMPLES));   // upload each full chunk
+      if (Date.now() - t0 >= flushMs) { if (buf.length) await flush(buf.splice(0)); seen = 0; t0 = Date.now(); }
+      renderProgress(seen, Date.now() - t0);
+      await sleep(0);
+    }
+    inFlight = 0;
+    if (buf.length && running) await flush(buf.splice(0));   // wind-down: upload the remainder too
+    if (running && winding) finalizeStop();
+  }
+
+  function onThreadMsg(e, w) {
+    if (!e.data || !running) return;
+    if (e.data.type === "batch") { gotBatch = true; flush(e.data.samples); }
+    else if (e.data.type === "wound") { inFlight--; renderProgress(); if (winding && inFlight <= 0) finalizeStop(); }
+  }
   function onWorkerFail() {
     if (mainMode || gotBatch) return;
     mainMode = true;
@@ -117,80 +158,57 @@
     if (!rng && typeof makeRng === "function") rng = makeRng((Date.now() ^ 0x5bd1e995) >>> 0);
     mainLoop();
   }
-  async function mainLoop() {
-    while (running && !winding) {                 // wind-down: finish the current batch, then exit
-      inFlight = 1; renderProgress();
-      var samples = [];
-      for (var g = 0; g < curGames && running; g++) { samples = samples.concat(selfPlay(curNet, curSims, 1.5, rng)); await sleep(0); }
-      inFlight = 0;
-      if (!running) break;
-      try { await sync.putShard(samples, workerId); pushed++; sampleCount += samples.length; render(); }
-      catch (err) { log("push failed: " + err.message); await sleep(1000); }
-      renderProgress();
-    }
-    if (running && winding) finalizeStop();
-  }
-  async function refreshCkpt() {
-    if (!running) return;
-    try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; curNet = netFromObj(c.net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: c.net }); }); log("refreshed net -> iter " + curIter); } } catch (e) {}
-  }
-  async function updateStats() {
-    if (!running) return;
-    var sps = sampleCount / Math.max(1, (Date.now() - startTime) / 1000);
-    var line = "~" + sps.toFixed(0) + " samples/s";
-    try { var s = await sync.stats(); line = "pending " + s.pendingShards + " · trainer iter " + s.iter + " · " + line; } catch (e) {}
-    $("stats").textContent = line;
-  }
 
   async function start() {
     var apiUrl = $("api").value.trim(), token = $("tok").value.trim();
     if (!apiUrl || !token) { log("enter the API URL and your worker token first"); return; }
-    var sims = parseInt($("sims").value, 10) || 20, games = parseInt($("games").value, 10) || 10, n = nThreads();
+    var upMin = parseFloat($("upload").value) || 5, sims = parseInt($("sims").value, 10) || 20, n = nThreads();
+    flushMs = Math.max(2000, upMin * 60000);
     localStorage.setItem("az_api", apiUrl); localStorage.setItem("az_tok", token);
-    localStorage.setItem("az_games", games); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
+    localStorage.setItem("az_upload", upMin); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
     if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
     workerId = wid();
     sync = makeSync({ apiUrl: apiUrl, token: token, workerId: workerId });
-    pushed = 0; sampleCount = 0; startTime = Date.now(); render(); setRunning(true); log("starting as " + workerId + " × " + n + " threads");
+    pushed = 0; sampleCount = 0; startTime = Date.now(); curSims = sims; render(); setRunning(true);
+    log("starting as " + workerId + " — upload every " + upMin + " min");
 
     var ck = null;
     try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); setRunning(false); return; }
     while (running && (!ck || !ck.net)) { log("waiting for the trainer's first checkpoint…"); await sleep(3000); try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); } }
     if (!running) return;
-    curIter = ck.iter; curNet = netFromObj(ck.net); curSims = sims; curGames = games;
+    curIter = ck.iter; curNet = netFromObj(ck.net); showStats();
     log("got checkpoint iter " + curIter + " — self-playing");
     acquireWake();
-    gotBatch = false; mainMode = false; winding = false; inFlight = 0; updateButtons();
+    gotBatch = false; mainMode = false; winding = false; inFlight = 0;
     for (var i = 0; i < n; i++) {
       try {
         var w = new Worker("worker/az_worker_thread.js");
-        w.onmessage = (function (ww) { return function (e) { onBatch(e, ww); }; })(w);
-        w.onerror = function () { onWorkerFail(); };   // file:// (APK) → fall back to the main thread
+        w.onmessage = (function (ww) { return function (e) { onThreadMsg(e, ww); }; })(w);
+        w.onerror = function () { onWorkerFail(); };       // file:// (APK) → main-thread fallback
         w.postMessage({ type: "ckpt", obj: ck.net });
-        w.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
+        w.postMessage({ type: "start", sims: sims, cPuct: curCpuct, flushMs: flushMs, maxSamples: MAX_SAMPLES });
         threads.push(w); inFlight++;
       } catch (e2) { onWorkerFail(); break; }
     }
     renderProgress();
-    refreshTimer = setInterval(refreshCkpt, 20000);
-    statsTimer = setInterval(updateStats, 8000);
   }
+
   function finalizeStop() {
-    if (!running) return;                          // idempotent
+    if (!running) return;
     running = false; winding = false; inFlight = 0;
     threads.forEach(function (w) { try { w.postMessage({ type: "stop" }); w.terminate(); } catch (e) {} });
     threads = [];
-    clearInterval(refreshTimer); clearInterval(statsTimer); releaseWake();
-    updateButtons(); renderProgress();
+    releaseWake(); updateButtons(); renderProgress();
     log("stopped");
   }
-  function windDown() {                            // stop launching new batches; let in-flight ones finish + upload
+  function windDown() {                              // finish + upload in-flight batch(es), launch no more, then stop
     if (!running || winding) return;
     winding = true; updateButtons(); renderProgress();
-    log("winding down — finishing " + (inFlight < 0 ? 0 : inFlight) + " batch(es) in progress, launching no more");
-    if (inFlight <= 0) finalizeStop();
+    threads.forEach(function (w) { try { w.postMessage({ type: "wind" }); } catch (e) {} });
+    log("winding down — finishing the current batch, then stopping");
+    if (!mainMode && inFlight <= 0) finalizeStop();
   }
-  function stop() { finalizeStop(); }              // hard stop (discards in-flight batches)
+  function stop() { finalizeStop(); }                // hard stop (discards the in-flight batch)
 
   $("start").addEventListener("click", start);
   $("wind").addEventListener("click", windDown);

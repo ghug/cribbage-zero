@@ -106,3 +106,18 @@ trainer and other Actions run from `main`, so changes go live only on release.
 **Bump the patch number only** (`0.1.0 → 0.1.1 → …`); do **not** advance the minor or major version
 unless explicitly asked. Bump `versionCode` by 1 and `versionName` to match in `android/app/build.gradle`,
 using the **same** keystore.
+
+## 8. Scaling & Cloudflare limits
+Each game produces ~125 samples. Shards are **capped at 1500 samples** (~0.4 MB after the worker rounds
+floats to 3 dp) to stay under D1's value-size limit (`SQLITE_TOOBIG`) — but **no samples are dropped**:
+a batch is split across as many capped shards as needed and all are uploaded.
+
+Request discipline (so the free tier stretches): the worker does **no periodic polling** — the trainer
+`iter` rides back on each `POST /shard` response, and the net is re-fetched only when that iter advances.
+Default upload cadence is the "Upload every (min)" field (5).
+
+Free-tier budget (shared across **all** phones): **100k Worker requests/day** and **100k D1 row-writes/day**.
+Each shard costs 1 request + 2 writes (insert, then the trainer's prune). Keeping every sample, a full-time
+phone uploads many shards/day, so the free tier sustains roughly **10–20 full-time phones**. For more, go
+**Cloudflare Workers Paid ($5/mo)** — D1 jumps to ~50M writes/day, removing the ceiling (the single
+GitHub-Action trainer then becomes the bottleneck; run it more often or shard the training).
