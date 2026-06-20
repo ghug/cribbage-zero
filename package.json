@@ -1,0 +1,14 @@
+{
+  "name": "cribbage-zero",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cribbage Zero — distributed AlphaZero-style self-play training for cribbage.",
+  "scripts": {
+    "test:browser": "node test/browser.mjs",
+    "test:sync": "node engine/verify_sync.js",
+    "bundle": "bash engine/build-bundle.sh"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
+}
