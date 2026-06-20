@@ -1,0 +1,36 @@
+name: Cribbage Zero trainer
+
+# The single trainer: every 30 min (and on demand) it pulls the self-play shards workers pushed to the
+# data-bus, SGD-trains the net, publishes the updated checkpoint, and prunes the consumed shards.
+# On an empty data-bus it seeds from engine/az_seed.json (continuing prior training, iter 1445).
+#
+# Requires two repo secrets:
+#   AZ_API_URL        the Worker API base, e.g. https://cribbage-zero-bus.<you>.workers.dev
+#   AZ_TRAINER_TOKEN  the trainer token (full access; NOT the worker token handed to devices)
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:                 # never run two trainers at once (single checkpoint writer)
+  group: cribbage-zero-trainer
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"     # Node 18+ for global fetch
+      - name: consume shards -> train -> publish checkpoint -> prune
+        env:
+          AZ_API_URL: ${{ secrets.AZ_API_URL }}
+          AZ_TRAINER_TOKEN: ${{ secrets.AZ_TRAINER_TOKEN }}
+        run: |
+          test -n "$AZ_API_URL" || { echo "::error::set the AZ_API_URL repo secret"; exit 1; }
+          test -n "$AZ_TRAINER_TOKEN" || { echo "::error::set the AZ_TRAINER_TOKEN repo secret"; exit 1; }
+          node engine/az_trainer.js --remote --once --seed engine/az_seed.json
