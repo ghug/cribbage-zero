@@ -80,7 +80,7 @@ class CribGame {
     if (this.starter.r === 11) { if (this._award(this.dealer, 2)) return; }   // his heels
     this.phase = "peg";
     this._pegHand = [this.kept[0].slice(), this.kept[1].slice()];
-    this._count = 0; this._pile = []; this._played = []; this._pegPasses = 0; this._pegLast = -1;
+    this._count = 0; this._pile = []; this._played = []; this._pegPasses = 0; this._pegLast = -1; this._goLow = [0, 0];
     this.toAct = this.pone;
     this._advancePeg(true);
   }
@@ -93,7 +93,8 @@ class CribGame {
       const hand = this._pegHand[this.toAct];
       const canPlay = hand.some((c) => pval(c.r) + this._count <= 31);
       if (canPlay) return;                                  // a real decision awaits
-      // current player must "go"
+      // current player must "go" — record the lowest count they went at this hand (they hold no card ≤ 31-count)
+      if (this._count > 0 && (!this._goLow[this.toAct] || this._count < this._goLow[this.toAct])) this._goLow[this.toAct] = this._count;
       if (++this._pegPasses >= 2) { if (this._pegLast >= 0 && this._count !== 31) { if (this._award(this._pegLast, 1)) return; } this._count = 0; this._pile = []; this._pegPasses = 0; this._pegLast = -1; }
       this.toAct = 1 - this.toAct;
     }
@@ -114,22 +115,38 @@ class CribGame {
   encode(player) {                                         // fixed-length features from player's info set
     const f = [];
     const opp = 1 - player;
-    // own visible cards (rank multiplicity 13): the six in discard, the kept-four after
-    const mine = this.phase === "discard" ? this.six[player] : (this._pegHand ? this._pegHand[player] : this.kept[player]);
-    const rc = new Array(13).fill(0); for (const c of mine) rc[c.r - 1]++; f.push(...rc.map((x) => x / 2));
+    // own hand BY POSITION (rank one-hot + suit one-hot), so the policy can target a specific card.
+    // 6 positions: discard = the six dealt cards; pegging = the current peg hand (rest zero-padded).
+    const hand = this.phase === "discard" ? this.six[player] : (this._pegHand ? this._pegHand[player] : this.kept[player]);
+    for (let p = 0; p < 6; p++) {
+      const c = hand && hand[p];
+      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
+      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
+      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
+    }
     // phase one-hot, who deals, to-act-is-me
     f.push(this.phase === "discard" ? 1 : 0, this.phase === "peg" ? 1 : 0, this.dealer === player ? 1 : 0, this.toAct === player ? 1 : 0);
     // scores (to-go, normalized) — mine then opp
     f.push((TARGET - this.scores[player]) / TARGET, (TARGET - this.scores[opp]) / TARGET);
-    // pegging context
+    // pegging context: count, my/opp peg-hand sizes
     f.push((this._count || 0) / 31, this.phase === "peg" ? this._pegHand[player].length / 4 : 0, this.phase === "peg" ? this._pegHand[opp].length / 4 : 0);
-    const tail = this.phase === "peg" && this._pile && this._pile.length ? this._pile[this._pile.length - 1] : 0;
-    const tr = new Array(13).fill(0); if (tail) tr[tail - 1] = 1; f.push(...tr);
-    // starter (known after the cut)
-    const sr = new Array(13).fill(0); if (this.starter) sr[this.starter.r - 1] = 1; f.push(...sr);
+    // lowest count the OPPONENT said "go" this hand (reveals they hold no card ≤ 31 - count)
+    f.push(((this._goLow && this._goLow[opp]) || 0) / 31);
+    // current pegging sequence: the last 6 cards by rank one-hot (6th-most-recent .. most-recent), so the
+    // net can see runs / pairs / 15-makers forming, not just the top card.
+    const pile = (this.phase === "peg" && this._pile) ? this._pile : [];
+    const last6 = pile.slice(-6), off = 6 - last6.length;
+    for (let p = 0; p < 6; p++) {
+      const r = p >= off ? last6[p - off] : 0;
+      const rr = new Array(13).fill(0); if (r) rr[r - 1] = 1; for (const x of rr) f.push(x);
+    }
+    // starter (rank + suit), known after the cut
+    const sr = new Array(13).fill(0), ssr = new Array(4).fill(0);
+    if (this.starter) { sr[this.starter.r - 1] = 1; ssr[this.starter.s] = 1; }
+    for (const x of sr) f.push(x); for (const x of ssr) f.push(x);
     return f;
   }
-  static get INPUT_DIM() { return 13 + 4 + 2 + 3 + 13 + 13; }
+  static get INPUT_DIM() { return 6 * 17 + 4 + 2 + 3 + 1 + 6 * 13 + 17; }   // 207: hand(6×17) + flags/scores/peg/go + pile(6×13) + starter(17)
   static get NPOL() { return NPOL; }
 
   // clone with the opponent's hidden cards resampled from the unseen pool (for IS-MCTS determinization)
@@ -161,6 +178,7 @@ class CribGame {
     g._count = this._count; g._pile = this._pile ? this._pile.slice() : this._pile;
     g._played = this._played ? this._played.slice() : this._played;
     g._pegPasses = this._pegPasses; g._pegLast = this._pegLast; g._deck = this._deck ? this._deck.slice() : this._deck;
+    g._goLow = this._goLow ? this._goLow.slice() : this._goLow;
     return g;
   }
 }

@@ -73,7 +73,7 @@ function evalVsRandom(net, games) {
 const ITERS = parseInt(process.argv[2], 10) || 5;
 const GAMES = parseInt(process.argv[3], 10) || 40;
 const SIMS = parseInt(process.argv[4], 10) || 20;
-const HID = 48, CPUCT = 1.5, LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20;
+const HID = 64, CPUCT = 1.5, LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20;
 const DO_EVAL = process.argv.includes("--eval");   // off by default — just train; eval only when asked
 const CKPT = path.join(__dirname, "az_checkpoint.json");
 

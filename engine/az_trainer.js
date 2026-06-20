@@ -16,7 +16,7 @@ const fs = require("fs");
 const path = require("path");
 const { freshNet, loadCheckpoint, saveCheckpoint, train, evalVsRandom, makeRng, netFromObj, netToObj } = require("./az_common.js");
 
-const HID = parseInt(process.argv[2], 10) || 48;
+const HID = parseInt(process.argv[2], 10) || 64;
 const IDLE = (parseInt(process.argv[3], 10) || 20) * 1000;
 const DO_EVAL = process.argv.includes("--eval");
 const REMOTE = process.argv.includes("--remote");

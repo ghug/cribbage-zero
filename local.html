@@ -116,7 +116,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.10";   // keep in sync with android/app/build.gradle versionName
-  var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
+  var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, GRAPH_EVERY = 1000000, graph = [];
@@ -155,7 +155,7 @@
   }
 
   // --- local persistence ---
-  function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && Array.isArray(o.W1[0]) && o.W1[0].length === o.nHid && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
+  function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && (typeof INPUT_DIM !== "number" || o.nIn === INPUT_DIM) && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
   function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(o)) return o; } catch (e) {} return null; }
   function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(ckObj())); } catch (e) { log("local save failed: " + e.message); } }
 
