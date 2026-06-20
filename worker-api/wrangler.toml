@@ -1,0 +1,16 @@
+name = "cribbage-zero-bus"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+workers_dev = true
+
+# D1 binding. Create the DB then paste its id here:
+#   wrangler d1 create cribbage-zero
+#   wrangler d1 execute cribbage-zero --remote --file worker-api/schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "cribbage-zero"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# Secrets (do NOT put tokens here — set them out-of-band):
+#   wrangler secret put WORKER_TOKEN
+#   wrangler secret put TRAINER_TOKEN

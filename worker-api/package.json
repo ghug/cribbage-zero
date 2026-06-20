@@ -1,0 +1,12 @@
+{
+  "name": "cribbage-zero-bus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cribbage Zero data-bus Cloudflare Worker (auth + CORS over D1).",
+  "scripts": {
+    "test": "node test.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}
