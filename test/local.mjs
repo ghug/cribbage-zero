@@ -49,23 +49,24 @@ try {
   await page.fill("#push", "999");
   await page.click("#start");
 
-  await page.waitForFunction(() => parseInt(document.getElementById("count").textContent, 10) >= 2, null, { timeout: 90000 });
-  const iter = parseInt(await page.textContent("#count"), 10);
-  check(iter >= 2, `trained ${iter} iterations on-device`);
+  const N = (s) => parseInt(String(s).replace(/[^0-9]/g, ""), 10);   // headline shows "games trained" (with commas)
+  await page.waitForFunction(() => parseInt(document.getElementById("count").textContent.replace(/[^0-9]/g, ""), 10) >= 2, null, { timeout: 90000 });
+  const games = N(await page.textContent("#count"));
+  check(games >= 2, `headline shows ${games} games trained (games, not iters)`);
   const log = await page.textContent("#log");
   check(/loss/.test(log), "training logged a loss");
   await page.click("#wind");   // graceful: finish the current iteration, then stop
   await page.waitForFunction(() => !document.getElementById("start").disabled, null, { timeout: 20000 });
   check(/winding down/.test(await page.textContent("#log")), "wind-down finished the iteration then stopped");
 
-  const saved = await page.evaluate(() => { const o = JSON.parse(localStorage.getItem("cz_local_ckpt") || "null"); return o && Array.isArray(o.W1) ? o.iter : -1; });
-  check(saved >= 1, `net persisted to localStorage at iter ${saved}`);
+  const saved = await page.evaluate(() => { const o = JSON.parse(localStorage.getItem("cz_local_ckpt") || "null"); return o && Array.isArray(o.W1) && typeof o.games === "number" ? o.games : -1; });
+  check(saved >= 2, `cumulative games persisted to the checkpoint (games ${saved})`);
 
-  // resume: reload and confirm it shows the saved iter
+  // resume: reload and confirm the games headline persists
   await page.reload();
-  await page.waitForFunction(() => parseInt(document.getElementById("count").textContent, 10) >= 1, null, { timeout: 10000 });
-  const resumed = parseInt(await page.textContent("#count"), 10);
-  check(resumed === saved, `resumed from localStorage at iter ${resumed} (saved ${saved})`);
+  await page.waitForFunction(() => parseInt(document.getElementById("count").textContent.replace(/[^0-9]/g, ""), 10) >= 2, null, { timeout: 10000 });
+  const resumed = N(await page.textContent("#count"));
+  check(resumed === saved, `resumed games headline ${resumed} (saved ${saved})`);
 
   check(errs.length === 0, "no uncaught errors / no GitHub calls" + (errs.length ? " — " + errs.slice(0, 2).join(" | ") : ""));
 } finally {
