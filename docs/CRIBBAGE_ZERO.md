@@ -96,3 +96,9 @@ the worker APK (`android/`).
 node engine/az_parallel.js 4 120 20 40     # 4 workers + trainer on local files, all cores
 node engine/az_net.js                      # core self-tests
 ```
+
+## 7. Releasing the APK / versioning
+Publish a GitHub Release with a `vX.Y.Z` tag (or use the web UI) — the `Worker APK Release`
+workflow builds + signs the APK and attaches it. **Bump the patch number only** (`0.1.0 → 0.1.1 → …`);
+do **not** advance the minor or major version unless explicitly asked. Bump `versionCode` by 1 and
+`versionName` to match in `android/app/build.gradle` for each release, using the **same** keystore.
