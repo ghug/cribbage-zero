@@ -16,7 +16,7 @@
   .row { display:flex; gap:10px; } .row > div { flex:1; }
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
   button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
-  #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; } #export { background:var(--gold); color:#241f0e; }
+  #start { background:var(--good); color:#10331f; } #wind { background:var(--gold); color:#241f0e; } #stop { background:var(--red); color:#fff; }
   button:disabled { opacity:.4; }
   .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
@@ -45,8 +45,8 @@
 
   <div class="btns">
     <button id="start">Start</button>
+    <button id="wind" disabled>Wind down</button>
     <button id="stop" disabled>Stop</button>
-    <button id="export">Export</button>
   </div>
 
   <div class="counter"><b id="count">0</b><span>iterations trained</span></div>
@@ -64,13 +64,14 @@
   var $ = function (id) { return document.getElementById(id); };
   var KEY = "cz_local_ckpt", HID = 48, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
-  var running = false, net = null, iter = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
+  var running = false, winding = false, net = null, iter = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
   function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000); }
-  function setRunning(on) { running = on; $("start").disabled = on; $("stop").disabled = !on; }
+  function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
+  function setRunning(on) { running = on; updateButtons(); }
   function render() { $("count").textContent = iter; }
   function showStats() {
     var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
@@ -116,7 +117,7 @@
 
   async function trainLoop() {
     var sims = parseInt($("sims").value, 10) || 20, gpi = parseInt($("games").value, 10) || 40;
-    while (running) {
+    while (running && !winding) {                  // wind-down: finish the current iteration, then stop
       var data = [];
       for (var g = 0; g < gpi && running; g++) { data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; progress("self-play " + (g + 1) + "/" + gpi); await sleep(0); }
       if (!running) break;
@@ -129,6 +130,7 @@
       if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
     }
     progress("");
+    if (running && winding) finalizeStop();        // reached the end of the current iteration during wind-down
   }
 
   async function start() {
@@ -152,11 +154,14 @@
     if (!running) return;
     log("training started"); trainLoop();
   }
-  function stop() { setRunning(false); progress(""); if (token) { pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); }); } log("stopped (saved at iter " + iter + ")"); }
-  function exportNet() {
-    try { var a = document.createElement("a"); a.href = "data:application/json;base64," + b64(JSON.stringify(netToObj(net, iter))); a.download = "cribbage-zero-net-iter" + iter + ".json"; document.body.appendChild(a); a.click(); a.remove(); log("exported net iter " + iter); }
-    catch (e) { log("export failed: " + e.message); }
+  function finalizeStop() {
+    if (!running) return;
+    running = false; winding = false; updateButtons(); progress("");
+    log("stopped (saved at iter " + iter + ")");
+    if (token) pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); });
   }
+  function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
+  function stop() { finalizeStop(); }              // hard stop (abandons the current iteration's self-play)
   function reset() { if (running) { log("stop first"); return; } if (!confirm("Discard the trained net and start over?")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; lastEval = null; lastLoss = 0; render(); showStats(); log("net reset to fresh"); }
 
   // restore config
@@ -168,8 +173,8 @@
   // show resume point from local (without auto-pulling)
   var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; render(); log("local net at iter " + iter + " (will sync with GitHub on Start)"); }
   $("start").addEventListener("click", start);
+  $("wind").addEventListener("click", windDown);
   $("stop").addEventListener("click", stop);
-  $("export").addEventListener("click", exportNet);
   $("reset").addEventListener("click", reset);
   $("tomode").addEventListener("click", function () { if (running) { log("stop first"); return; } localStorage.setItem("cz_mode", "worker"); location.href = "worker.html"; });
 })();

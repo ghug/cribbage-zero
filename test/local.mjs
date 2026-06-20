@@ -54,8 +54,9 @@ try {
   check(iter >= 2, `trained ${iter} iterations on-device`);
   const log = await page.textContent("#log");
   check(/loss/.test(log), "training logged a loss");
-  await page.click("#stop");
-  await page.waitForFunction(() => !document.getElementById("start").disabled, null, { timeout: 10000 });
+  await page.click("#wind");   // graceful: finish the current iteration, then stop
+  await page.waitForFunction(() => !document.getElementById("start").disabled, null, { timeout: 20000 });
+  check(/winding down/.test(await page.textContent("#log")), "wind-down finished the iteration then stopped");
 
   const saved = await page.evaluate(() => { const o = JSON.parse(localStorage.getItem("cz_local_ckpt") || "null"); return o && Array.isArray(o.W1) ? o.iter : -1; });
   check(saved >= 1, `net persisted to localStorage at iter ${saved}`);
