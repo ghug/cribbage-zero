@@ -18,10 +18,11 @@
   button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
   #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; }
   button:disabled { opacity:.4; }
-  .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0; }
+  .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
+  #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:12px; }
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px;
-         padding:10px; height:180px; overflow:auto; white-space:pre-wrap; }
+         padding:10px; height:170px; overflow:auto; white-space:pre-wrap; }
   .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
 </style>
 </head>
@@ -37,6 +38,7 @@
   <div class="row">
     <div><label for="games">Games / batch</label><input id="games" type="number" min="1" value="10" /></div>
     <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="20" /></div>
+    <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
   </div>
 
   <div class="btns">
@@ -45,65 +47,96 @@
   </div>
 
   <div class="counter"><b id="count">0</b><span>iterations pushed</span></div>
+  <div id="stats"></div>
   <div id="log"></div>
-  <p class="note">Self-play runs on this device in the background and uploads batches to the trainer. Keep the screen on for best throughput. A token only lets this device append self-play and read the network — it cannot change anyone else's data.</p>
+  <p class="note">Self-play runs on this device (across CPU threads) and uploads batches to the trainer.
+  The screen is kept awake while running. A token only lets this device append self-play and read the
+  network — it cannot change anyone else's data.</p>
 </div>
 
 <script src="worker/az_bundle.js"></script><!-- provides makeSync() on the main thread -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var sync = null, thread = null, running = false, pushed = 0, curIter = -1, workerId = null;
+  var threads = [], running = false, sync = null, pushed = 0, curIter = -1, workerId = null;
+  var wakeLock = null, sampleCount = 0, startTime = 0, refreshTimer = null, statsTimer = null;
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
   function log(msg) {
-    var el = $("log"); var t = new Date().toLocaleTimeString();
+    var el = $("log"), t = new Date().toLocaleTimeString();
     el.textContent = "[" + t + "] " + msg + "\n" + el.textContent;
     if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000);
   }
   function render() { $("count").textContent = pushed; }
   function setRunning(on) { running = on; $("start").disabled = on; $("stop").disabled = !on; }
   function wid() { var w = localStorage.getItem("az_wid"); if (!w) { w = "dev-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("az_wid", w); } return w; }
+  function nThreads() { var v = parseInt($("threads").value, 10); return Math.max(1, Math.min(16, v || 1)); }
 
   // restore saved config
   $("api").value = localStorage.getItem("az_api") || "";
   $("tok").value = localStorage.getItem("az_tok") || "";
   if (localStorage.getItem("az_games")) $("games").value = localStorage.getItem("az_games");
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
+  $("threads").value = localStorage.getItem("az_threads") || Math.min((navigator.hardwareConcurrency || 2), 4);
 
-  async function onBatch(e) {
+  // keep the screen on while working (re-acquire when the tab returns to the foreground)
+  async function acquireWake() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
+  function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
+  document.addEventListener("visibilitychange", function () { if (running && document.visibilityState === "visible" && !wakeLock) acquireWake(); });
+
+  async function onBatch(e, w) {
     if (!e.data || e.data.type !== "batch" || !running) return;
-    try { await sync.putShard(e.data.samples, workerId); pushed++; render(); log("pushed shard #" + pushed + " (" + e.data.samples.length + " samples)"); }
-    catch (err) { log("push failed: " + err.message + " — retrying next batch"); }
-    if (running && pushed % 10 === 0) {
-      try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; thread.postMessage({ type: "ckpt", obj: c.net }); log("refreshed net -> iter " + curIter); } } catch (e2) {}
-    }
-    if (running) thread.postMessage({ type: "next" });
+    try { await sync.putShard(e.data.samples, workerId); pushed++; sampleCount += e.data.samples.length; render(); }
+    catch (err) { log("push failed: " + err.message + " — retrying"); }
+    if (running) w.postMessage({ type: "next" });
+  }
+  async function refreshCkpt() {
+    if (!running) return;
+    try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: c.net }); }); log("refreshed net -> iter " + curIter); } } catch (e) {}
+  }
+  async function updateStats() {
+    if (!running) return;
+    var sps = sampleCount / Math.max(1, (Date.now() - startTime) / 1000);
+    var line = "~" + sps.toFixed(0) + " samples/s";
+    try { var s = await sync.stats(); line = "pending " + s.pendingShards + " · trainer iter " + s.iter + " · " + line; } catch (e) {}
+    $("stats").textContent = line;
   }
 
   async function start() {
     var apiUrl = $("api").value.trim(), token = $("tok").value.trim();
     if (!apiUrl || !token) { log("enter the API URL and your worker token first"); return; }
-    var sims = parseInt($("sims").value, 10) || 20, games = parseInt($("games").value, 10) || 10;
+    var sims = parseInt($("sims").value, 10) || 20, games = parseInt($("games").value, 10) || 10, n = nThreads();
     localStorage.setItem("az_api", apiUrl); localStorage.setItem("az_tok", token);
-    localStorage.setItem("az_games", games); localStorage.setItem("az_sims", sims);
+    localStorage.setItem("az_games", games); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
     if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
     workerId = wid();
     sync = makeSync({ apiUrl: apiUrl, token: token, workerId: workerId });
-    pushed = 0; render(); setRunning(true); log("starting as " + workerId);
+    pushed = 0; sampleCount = 0; startTime = Date.now(); render(); setRunning(true); log("starting as " + workerId + " × " + n + " threads");
 
     var ck = null;
     try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); setRunning(false); return; }
     while (running && (!ck || !ck.net)) { log("waiting for the trainer's first checkpoint…"); await sleep(3000); try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); } }
     if (!running) return;
     curIter = ck.iter; log("got checkpoint iter " + curIter + " — self-playing");
-    thread = new Worker("worker/az_worker_thread.js");
-    thread.onmessage = onBatch;
-    thread.onerror = function (err) { log("worker error: " + (err.message || err)); };
-    thread.postMessage({ type: "ckpt", obj: ck.net });
-    thread.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
+    acquireWake();
+    for (var i = 0; i < n; i++) {
+      var w = new Worker("worker/az_worker_thread.js");
+      w.onmessage = (function (ww) { return function (e) { onBatch(e, ww); }; })(w);
+      w.onerror = function (err) { log("worker error: " + (err.message || err)); };
+      w.postMessage({ type: "ckpt", obj: ck.net });
+      w.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
+      threads.push(w);
+    }
+    refreshTimer = setInterval(refreshCkpt, 20000);
+    statsTimer = setInterval(updateStats, 8000);
   }
-  function stop() { setRunning(false); if (thread) { try { thread.postMessage({ type: "stop" }); thread.terminate(); } catch (e) {} thread = null; } log("stopped"); }
+  function stop() {
+    setRunning(false);
+    threads.forEach(function (w) { try { w.postMessage({ type: "stop" }); w.terminate(); } catch (e) {} });
+    threads = [];
+    clearInterval(refreshTimer); clearInterval(statsTimer); releaseWake();
+    log("stopped");
+  }
 
   $("start").addEventListener("click", start);
   $("stop").addEventListener("click", stop);
