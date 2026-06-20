@@ -85,33 +85,41 @@ await new Promise((r) => stat.listen(0, r));
 const API = api.address().port, WEB = stat.address().port;
 
 const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
-try {
+
+async function drive(label, disableWorkers) {
+  const before = db._st.shards.length;
   const page = await browser.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push("pageerror: " + e.message));
   page.on("console", (m) => { if (m.type() === "error") errs.push("console.error: " + m.text()); });
+  // simulate the Android WebView case where Web Workers can't load from file://
+  if (disableWorkers) await page.addInitScript(() => { window.Worker = function () { throw new Error("Worker unavailable (test)"); }; });
 
   await page.goto(`http://localhost:${WEB}/worker.html`);
-  check(await page.$("#start") !== null, "worker.html loaded (Start button present)");
-
+  check(await page.$("#start") !== null, `[${label}] worker.html loaded`);
   await page.fill("#api", `http://localhost:${API}`);
   await page.fill("#tok", "wtok");
   await page.fill("#games", "2");
   await page.fill("#sims", "8");
   await page.click("#start");
 
-  // the Web Worker must self-play and the main thread must POST shards → counter climbs to >=2
   await page.waitForFunction(() => parseInt(document.getElementById("count").textContent, 10) >= 2, null, { timeout: 90000 });
   const count = parseInt(await page.textContent("#count"), 10);
-  check(count >= 2, `counter reached ${count} (Web Worker self-played + shards posted)`);
+  check(count >= 2, `[${label}] counter reached ${count} (self-played + posted shards)`);
 
   const logTxt = await page.textContent("#log");
-  check(/iter 1445/.test(logTxt), "page pulled the seeded checkpoint (iter 1445)");
-  check(db._st.shards.length >= 2, `API received ${db._st.shards.length} shards`);
-  check(JSON.parse(db._st.shards[0].samples)[0].z !== undefined, "shard samples are well-formed (have z)");
-  check(errs.length === 0, "no uncaught page/console errors" + (errs.length ? " — " + errs.slice(0, 3).join(" | ") : ""));
+  check(/iter 1445/.test(logTxt), `[${label}] pulled the seeded checkpoint (iter 1445)`);
+  if (disableWorkers) check(/main thread/.test(logTxt), `[${label}] fell back to main-thread self-play`);
+  check(db._st.shards.length > before, `[${label}] API received ${db._st.shards.length - before} new shards`);
+  check(errs.length === 0, `[${label}] no uncaught errors` + (errs.length ? " — " + errs.slice(0, 2).join(" | ") : ""));
 
   await page.click("#stop");
+  await page.close();
+}
+
+try {
+  await drive("web-workers", false);   // browser path: multi-core Web Workers
+  await drive("main-thread", true);    // APK path: Workers blocked → main-thread fallback
 } finally {
   await browser.close(); api.close(); stat.close();
 }

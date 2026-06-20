@@ -60,6 +60,8 @@
   var $ = function (id) { return document.getElementById(id); };
   var threads = [], running = false, sync = null, pushed = 0, curIter = -1, workerId = null;
   var wakeLock = null, sampleCount = 0, startTime = 0, refreshTimer = null, statsTimer = null;
+  var curNet = null, curSims = 20, curGames = 10, mainMode = false, gotBatch = false;
+  var rng = (typeof makeRng === "function") ? makeRng((Date.now() ^ 0x5bd1e995) >>> 0) : null;
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
   function log(msg) {
@@ -86,13 +88,32 @@
 
   async function onBatch(e, w) {
     if (!e.data || e.data.type !== "batch" || !running) return;
+    gotBatch = true;                              // Web Workers work here → no main-thread fallback
     try { await sync.putShard(e.data.samples, workerId); pushed++; sampleCount += e.data.samples.length; render(); }
     catch (err) { log("push failed: " + err.message + " — retrying"); }
     if (running) w.postMessage({ type: "next" });
   }
+  // Android WebView can't load a Web Worker from a file:// page; if they fail, self-play on the main thread.
+  function onWorkerFail() {
+    if (mainMode || gotBatch) return;
+    mainMode = true;
+    log("Web Workers unavailable here — self-playing on the main thread");
+    threads.forEach(function (w) { try { w.terminate(); } catch (e) {} }); threads = [];
+    if (!rng && typeof makeRng === "function") rng = makeRng((Date.now() ^ 0x5bd1e995) >>> 0);
+    mainLoop();
+  }
+  async function mainLoop() {
+    while (running) {
+      var samples = [];
+      for (var g = 0; g < curGames && running; g++) { samples = samples.concat(selfPlay(curNet, curSims, 1.5, rng)); await sleep(0); }
+      if (!running) break;
+      try { await sync.putShard(samples, workerId); pushed++; sampleCount += samples.length; render(); }
+      catch (err) { log("push failed: " + err.message); await sleep(1000); }
+    }
+  }
   async function refreshCkpt() {
     if (!running) return;
-    try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: c.net }); }); log("refreshed net -> iter " + curIter); } } catch (e) {}
+    try { var c = await sync.getCheckpoint(); if (c && c.net && c.iter > curIter) { curIter = c.iter; curNet = netFromObj(c.net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: c.net }); }); log("refreshed net -> iter " + curIter); } } catch (e) {}
   }
   async function updateStats() {
     if (!running) return;
@@ -117,15 +138,19 @@
     try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); setRunning(false); return; }
     while (running && (!ck || !ck.net)) { log("waiting for the trainer's first checkpoint…"); await sleep(3000); try { ck = await sync.getCheckpoint(); } catch (e) { log("error: " + e.message); } }
     if (!running) return;
-    curIter = ck.iter; log("got checkpoint iter " + curIter + " — self-playing");
+    curIter = ck.iter; curNet = netFromObj(ck.net); curSims = sims; curGames = games;
+    log("got checkpoint iter " + curIter + " — self-playing");
     acquireWake();
+    gotBatch = false; mainMode = false;
     for (var i = 0; i < n; i++) {
-      var w = new Worker("worker/az_worker_thread.js");
-      w.onmessage = (function (ww) { return function (e) { onBatch(e, ww); }; })(w);
-      w.onerror = function (err) { log("worker error: " + (err.message || err)); };
-      w.postMessage({ type: "ckpt", obj: ck.net });
-      w.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
-      threads.push(w);
+      try {
+        var w = new Worker("worker/az_worker_thread.js");
+        w.onmessage = (function (ww) { return function (e) { onBatch(e, ww); }; })(w);
+        w.onerror = function () { onWorkerFail(); };   // file:// (APK) → fall back to the main thread
+        w.postMessage({ type: "ckpt", obj: ck.net });
+        w.postMessage({ type: "start", sims: sims, games: games, cPuct: 1.5 });
+        threads.push(w);
+      } catch (e2) { onWorkerFail(); break; }
     }
     refreshTimer = setInterval(refreshCkpt, 20000);
     statsTimer = setInterval(updateStats, 8000);
