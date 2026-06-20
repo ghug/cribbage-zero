@@ -57,12 +57,13 @@ export default {
 
       if (request.method === "POST" && path === "/checkpoint") {
         if (!isTrainer) return json({ error: "forbidden" }, 403);
+        // body is the flat net object: { iter, nIn, nHid, nPol, W1, b1, Wv, bv, Wp, bp }
         const body = await request.json().catch(() => null);
-        if (!body || typeof body.iter !== "number" || !body.net) return json({ error: "bad request" }, 400);
+        if (!body || typeof body.iter !== "number" || !Array.isArray(body.W1)) return json({ error: "bad request" }, 400);
         await env.DB.prepare(
           "INSERT INTO checkpoint (id,iter,net,updated_at) VALUES (1,?,?,?) " +
           "ON CONFLICT(id) DO UPDATE SET iter=excluded.iter, net=excluded.net, updated_at=excluded.updated_at")
-          .bind(body.iter, JSON.stringify(body.net), Date.now()).run();
+          .bind(body.iter, JSON.stringify(body), Date.now()).run();
         return json({ ok: true, iter: body.iter });
       }
 

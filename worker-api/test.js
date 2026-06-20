@@ -69,7 +69,8 @@ async function js(r) { return { status: r.status, body: await r.json().catch(() 
 
   // trainer pulls, publishes checkpoint, prunes
   { const r = await js(await call("GET", "/shards", T, undefined)); check(r.body.shards.length === 2 && r.body.shards[0].samples[0].z === 1, "trainer GET /shards returns both with parsed samples"); }
-  check((await js(await call("POST", "/checkpoint", T, { iter: 7, net: { nHid: 48 } }))).body.iter === 7, "trainer publishes checkpoint");
+  const netObj = { iter: 7, nIn: 48, nHid: 48, nPol: 15, W1: [[1]], b1: [0], Wv: [0], bv: 0, Wp: [[0]], bp: [0] };
+  check((await js(await call("POST", "/checkpoint", T, netObj))).body.iter === 7, "trainer publishes checkpoint (flat net object)");
   { const r = await js(await call("GET", "/checkpoint", W)); check(r.body.iter === 7 && r.body.net.nHid === 48, "worker reads published checkpoint"); }
   { const ids = (await js(await call("GET", "/shards", T))).body.shards.map((s) => s.id);
     check((await js(await call("POST", "/prune", T, { ids }))).body.pruned === 2, "trainer prunes consumed shards"); }
