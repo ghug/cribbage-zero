@@ -9,6 +9,8 @@ on:
     tags:
       - 'v*'
       - '[0-9]*'
+  release:
+    types: [published]   # creating a Release in the GitHub web UI also triggers a build
   workflow_dispatch:
 
 permissions:
