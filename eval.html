@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Evaluate</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:460px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  a { color:var(--gold); }
+  label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btns { display:flex; gap:10px; margin:18px 0 8px; }
+  button.act { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
+  #run { background:var(--good); color:#10331f; } #dry { background:var(--gold); color:#241f0e; }
+  button:disabled { opacity:.4; }
+  .results { display:flex; gap:10px; margin:14px 0 8px; }
+  .res { flex:1; text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:16px 8px; }
+  .res b { display:block; font-size:30px; color:var(--gold); line-height:1; } .res span { color:var(--mut); font-size:12px; }
+  #status { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:4px 0; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:150px; overflow:auto; white-space:pre-wrap; margin-top:8px; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Cribbage Zero — Evaluate</h1>
+  <p class="sub">Pulls the latest net, plays balanced games vs random and vs the hard bot, and records a point on the
+  <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch. <a href="dev.html">← dev tools</a></p>
+
+  <label for="token">GitHub token (Contents: write — only needed to record)</label>
+  <input id="token" type="password" placeholder="ghp_… — leave blank for a dry run" autocapitalize="off" autocorrect="off" />
+  <div class="row">
+    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
+    <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="250" /></div>
+  </div>
+
+  <div class="btns">
+    <button id="run" class="act">Run &amp; record</button>
+    <button id="dry" class="act">Dry run</button>
+  </div>
+  <div class="results">
+    <div class="res"><b id="rRand">—</b><span>% vs random</span></div>
+    <div class="res"><b id="rHard">—</b><span>% vs hard</span></div>
+  </div>
+  <div id="status"></div>
+  <div id="log"></div>
+  <p class="note">The Zero side plays natively (the net's greedy policy). The hard bot is a vendored snapshot of the
+  cribbage-trainer heuristic (win-prob discard + depth-1 pegging) — a fixed benchmark. Public domain (The Unlicense).</p>
+</div>
+
+<script src="worker/az_bundle.js"></script><!-- Net, CribGame, evalVsRandom, argmaxLegal, randomLegal, netFromObj, makeRng, handDetail, pegChooseDeep, pval -->
+<script src="src/winprob.js"></script><!-- winProbHand -->
+<script>
+(function () {   // IIFE so our locals (TARGET, COMBOS6, …) don't collide with the bundle's globals
+  var $ = function (id) { return document.getElementById(id); };
+  var TARGET = 121, NPOL = 15, BRANCH = "net", PROG = "progress", CKPATH = "checkpoints/az_checkpoint.json";
+  var token = "", repo = "ghug/cribbage-zero", busy = false;
+  var rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; }
+  function status(m) { $("status").textContent = m; }
+
+  // --- vendored hard bot (reads the CribGame info-set -> a policy slot) ---
+  var CRIB_VALUE = [3.96, 3.95, 4.05, 4.06, 6.38, 4.10, 4.21, 4.34, 4.09, 3.74, 4.19, 3.73, 3.85];
+  var fifteen = function (r) { return Math.min(r, 10); };
+  function cribSeed(a, b) { var v = (CRIB_VALUE[a.r - 1] + CRIB_VALUE[b.r - 1]) * .5; if (a.r === b.r) v += 2; else if (Math.abs(a.r - b.r) <= 2) v += .5; if (fifteen(a.r) + fifteen(b.r) === 15) v += 2; return v; }
+  var COMBOS6 = (function () { var o = []; for (var i = 0; i < 6; i++) for (var j = i + 1; j < 6; j++) o.push([i, j]); return o; })();
+  function hardSlot(g, player) {
+    if (g.phase === "discard") {
+      var dealt = g.six[player], cribOurs = (g.dealer === player);
+      var board = { yourToGo: TARGET - g.scores[player], oppToGo: TARGET - g.scores[1 - player], youDeal: cribOurs, P: 2, teams: 2 };
+      var best = 0, bv = -1e9;
+      for (var s = 0; s < NPOL; s++) {
+        var i = COMBOS6[s][0], j = COMBOS6[s][1];
+        var four = dealt.filter(function (_, k) { return k !== i && k !== j; }), thrown = [dealt[i], dealt[j]];
+        var hd = handDetail(four, dealt), cv = cribSeed(thrown[0], thrown[1]);
+        var v = winProbHand(board, hd.ev + (cribOurs ? cv : 0), hd.sd, cribOurs ? 0 : cv);
+        if (v > bv) { bv = v; best = s; }
+      }
+      return best;
+    }
+    var hand = g._pegHand[player], count = g._count, kept = g.kept[player];
+    var acct = new Array(14).fill(0);
+    hand.forEach(function (c) { acct[c.r]++; });
+    g.six[player].forEach(function (c) { if (kept.indexOf(c) === -1) acct[c.r]++; });
+    if (g.starter) acct[g.starter.r]++;
+    g._playedSuited.forEach(function (c) { acct[c.r]++; });
+    var unseen = []; for (var r = 1; r <= 13; r++) { var a = 4 - acct[r]; for (var k = 0; k < a; k++) unseen.push(r); }
+    var legalR = hand.filter(function (c) { return pval(c.r) + count <= 31; }).map(function (c) { return c.r; });
+    var cr = pegChooseDeep(legalR, count, g._pile.slice(), hand.map(function (c) { return c.r; }), unseen);
+    var slot = hand.findIndex(function (c) { return c.r === cr && pval(c.r) + count <= 31; });
+    if (slot < 0) slot = g.decision.slots.findIndex(Boolean);
+    return slot;
+  }
+
+  // net (greedy) vs an opponent slot-fn; seats swapped each game; yields to keep the UI alive
+  async function runMatch(net, oppFn, games, label) {
+    var wins = 0;
+    for (var gi = 0; gi < games; gi++) {
+      var g = new CribGame(rng), netSeat = gi & 1, guard = 0;
+      while (!g.done && guard++ < 4000) {
+        var p = g.toAct, legal = g.decision.slots;
+        g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : oppFn(g, p));
+      }
+      if (g.winner === netSeat) wins++;
+      if (gi % 25 === 0) { status(label + " " + gi + "/" + games + " …"); await sleep(0); }
+    }
+    return +(100 * wins / games).toFixed(1);
+  }
+
+  // --- GitHub ---
+  function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function unb64(s) { return decodeURIComponent(escape(atob(s.replace(/\s/g, "")))); }
+  async function gh(method, path, body) {
+    var headers = { Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token) headers.Authorization = "Bearer " + token;
+    var res = await fetch("https://api.github.com" + path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined });
+    var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
+    return j;
+  }
+  async function appendPoint(file, games, pct) {
+    var cur = await gh("GET", "/repos/" + repo + "/contents/" + file + "?ref=" + PROG);
+    var content = unb64(cur.content).replace(/\n*$/, "\n") + games + "," + pct + "\n";
+    await gh("PUT", "/repos/" + repo + "/contents/" + file, { message: "eval @ " + games + " games: " + file + " " + pct + "%", content: b64(content), sha: cur.sha, branch: PROG });
+  }
+
+  async function go(record) {
+    if (busy) return; busy = true; $("run").disabled = true; $("dry").disabled = true;
+    $("rRand").textContent = "—"; $("rHard").textContent = "—";
+    token = $("token").value.trim(); repo = $("repo").value.trim() || "ghug/cribbage-zero";
+    var decks = Math.max(1, parseInt($("decks").value, 10) || 250), games = decks * 2;
+    rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
+    try {
+      if (record && !token) { log("a token is required to record — doing a dry run instead"); record = false; }
+      status("pulling net …"); await sleep(0);
+      var ck = JSON.parse(unb64((await gh("GET", "/repos/" + repo + "/contents/" + CKPATH + "?ref=" + BRANCH)).content));
+      var net = netFromObj(ck), trained = ck.games || 0;
+      log("net @ " + trained.toLocaleString() + " games — " + games + " balanced games per match");
+      var vsRand = await runMatch(net, function (g) { return randomLegal(g.decision.slots, rng); }, games, "vs random");
+      $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
+      var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
+      $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
+      if (record) {
+        status("recording …"); await sleep(0);
+        await appendPoint("progress-random.csv", trained, vsRand);
+        await appendPoint("progress-hard.csv", trained, vsHard);
+        log("recorded both points on the progress branch ✓");
+      } else log("dry run — not recorded");
+      status("done");
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false; $("run").disabled = false; $("dry").disabled = false;
+  }
+
+  if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
+  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
+  $("run").addEventListener("click", function () { if ($("token").value.trim()) localStorage.setItem("cz_token", $("token").value.trim()); localStorage.setItem("cz_repo", $("repo").value.trim() || "ghug/cribbage-zero"); go(true); });
+  $("dry").addEventListener("click", function () { go(false); });
+})();
+</script>
+</body>
+</html>

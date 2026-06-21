@@ -1,0 +1,59 @@
+name: Deploy dev tools to GitHub Pages
+
+# Publishes the dev-only browser tools (dev.html hub, local.html / worker.html trainers, eval.html) to
+# GitHub Pages so they can be run online. Unlike "Deploy from a branch", this builds the engine bundle
+# (worker/az_bundle.js is gitignored) and uploads only the pages + the bundle + src/winprob.js.
+# Serves the `dev` branch. Pages must be enabled in repo settings (Source: GitHub Actions).
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "dev.html"
+      - "eval.html"
+      - "local.html"
+      - "worker.html"
+      - "src/**"
+      - "engine/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the engine bundle
+        run: ./engine/build-bundle.sh   # -> worker/az_bundle.js (used by local.html / worker.html / eval.html)
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/worker _site/src
+          cp dev.html eval.html local.html worker.html _site/
+          cp worker/az_bundle.js _site/worker/
+          cp src/winprob.js _site/src/
+          touch _site/.nojekyll   # serve files verbatim
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
