@@ -102,7 +102,24 @@
     if (Array.isArray(o.W)) return Array.isArray(o.W[0]) && Array.isArray(o.W[0][0]) && o.W[0][0].length === o.nIn;
     return Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn;
   }
-  async function currentNet() { return JSON.parse(unb64((await gh("GET", "/contents/" + CKPATH + "?ref=" + NET)).content)); }
+  // GET a file's content via the RAW media type (no ≤1MB inline cap — the net is multi-MB); returns text
+  async function ghRaw(path) {
+    var headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) headers.Authorization = "Bearer " + token();
+    var res = await fetch("https://api.github.com/repos/" + repo() + path, { headers: headers, cache: "no-store" });
+    if (res.status >= 400) { var e = new Error("GET " + path.split("?")[0] + " -> " + res.status); e.status = res.status; throw e; }
+    return res.text();
+  }
+  // append a file to a branch via the git data API (handles multi-MB files; contents PUT caps ~1MB)
+  async function appendFile(branch, path, content, message) {
+    var ref = await gh("GET", "/git/ref/heads/" + branch);
+    var base = await gh("GET", "/git/commits/" + ref.object.sha);
+    var blob = await gh("POST", "/git/blobs", { content: b64(content), encoding: "base64" });
+    var tree = await gh("POST", "/git/trees", { base_tree: base.tree.sha, tree: [{ path: path, mode: "100644", type: "blob", sha: blob.sha }] });
+    var commit = await gh("POST", "/git/commits", { message: message, tree: tree.sha, parents: [ref.object.sha] });
+    await gh("PATCH", "/git/refs/heads/" + branch, { sha: commit.sha });
+  }
+  async function currentNetText() { return ghRaw("/contents/" + CKPATH + "?ref=" + NET); }
 
   function parseName(n) { var m = n.match(/^(\d+)g-iter(\d+)-/); return m ? { games: +m[1], iter: +m[2] } : { games: null, iter: null }; }
 
@@ -135,13 +152,13 @@
     if (busy) return; if (!token()) { status("a token is required to snapshot"); return; }
     busy = true; $("snap").disabled = true; status("snapshotting…");
     try {
-      var o = await currentNet();
+      var text = await currentNetText(), o = JSON.parse(text);
       if (!validNet(o)) throw new Error("current net looks malformed — not archiving");
       var games = o.games || 0, iter = o.iter || 0, name = games + "g-iter" + iter + "-" + stamp() + ".json";
       // ensure net-archive exists (seed from the current net commit)
       try { await gh("GET", "/git/ref/heads/" + ARCH); }
       catch (e) { if (e.status !== 404) throw e; var base = await gh("GET", "/git/ref/heads/" + NET); await gh("POST", "/git/refs", { ref: "refs/heads/" + ARCH, sha: base.object.sha }); log("created net-archive branch"); }
-      await gh("PUT", "/contents/" + DIR + "/" + name, { message: "snapshot net @ " + games + " games (iter " + iter + ")", content: b64(JSON.stringify(o)), branch: ARCH });
+      await appendFile(ARCH, DIR + "/" + name, text, "snapshot net @ " + games + " games (iter " + iter + ")");
       log("archived " + DIR + "/" + name);
       status("snapshot saved ✓"); await refresh();
     } catch (e) { log("error: " + e.message); status("error"); }
@@ -160,10 +177,10 @@
     var name = pendingRollback; pendingRollback = null;
     busy = true; persistToken(); status("rolling back…");
     try {
-      var f = await gh("GET", "/contents/" + DIR + "/" + encodeURIComponent(name) + "?ref=" + ARCH);
-      var o = JSON.parse(unb64(f.content));
+      var text = await ghRaw("/contents/" + DIR + "/" + encodeURIComponent(name) + "?ref=" + ARCH);
+      var o = JSON.parse(text);
       if (!validNet(o)) throw new Error("snapshot looks malformed — not restoring");
-      var blob = await gh("POST", "/git/blobs", { content: b64(JSON.stringify(o)), encoding: "base64" });
+      var blob = await gh("POST", "/git/blobs", { content: b64(text), encoding: "base64" });
       var tree = await gh("POST", "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.sha }] });
       var commit = await gh("POST", "/git/commits", { message: "rollback: net @ iter " + (o.iter || 0) + " (" + (o.games || 0) + " games) from " + name, tree: tree.sha, parents: [] });
       await gh("PATCH", "/git/refs/heads/" + NET, { sha: commit.sha, force: true });

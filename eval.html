@@ -144,6 +144,14 @@
     if (j === null) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + " empty/non-JSON response (retry)");
     return j;
   }
+  // GET a file's content via the RAW media type (no 1MB inline cap — the net is multi-MB); returns text
+  async function ghRaw(path) {
+    var headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token) headers.Authorization = "Bearer " + token;
+    var res = await fetch("https://api.github.com" + path, { headers: headers, cache: "no-store" });
+    if (res.status >= 400) throw new Error("GET " + path.split("?")[0] + " -> " + res.status);
+    return res.text();
+  }
   async function appendPoint(file, games, pct) {
     var cur = await gh("GET", "/repos/" + repo + "/contents/" + file + "?ref=" + PROG);
     var content = unb64(cur.content).replace(/\n*$/, "\n") + games + "," + pct + "\n";
@@ -175,7 +183,7 @@
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
       status("pulling net …"); await sleep(0);
-      var ck = JSON.parse(unb64((await gh("GET", "/repos/" + repo + "/contents/" + CKPATH + "?ref=" + BRANCH)).content));
+      var ck = JSON.parse(await ghRaw("/repos/" + repo + "/contents/" + CKPATH + "?ref=" + BRANCH));   // raw media type — net is multi-MB (>1MB JSON-inline cap)
       var net = netFromObj(ck), trained = ck.games || 0;
       log("net @ " + trained.toLocaleString() + " games — " + games + " balanced games per match");
       var vsRand = await runMatch(net, function (g) { return randomLegal(g.decision.slots, rng); }, games, "vs random");

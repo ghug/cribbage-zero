@@ -82,10 +82,13 @@ async function gh(method, path, body) {
   if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
   return { status: res.status, body: j };
 }
-async function pullNet() {
-  try { const r = await gh("GET", "/repos/" + REPO + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH);
-    return JSON.parse(unb64(r.body.content)); }
-  catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
+async function pullNet() {   // RAW media type — the net is multi-MB and the JSON repr only inlines content ≤1MB
+  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, {
+    headers: { Authorization: "Bearer " + TOKEN, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-contribute" },
+  });
+  if (res.status === 404) return null;
+  if (res.status >= 400) throw new Error("pull net -> " + res.status);
+  return JSON.parse(await res.text());
 }
 async function pushNet(net, iter, games) {   // pushes ONLY the net file; progress.csv is on its own branch, untouched
   const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckpt(net, iter, games))), encoding: "base64" });

@@ -168,18 +168,25 @@
     if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
     return { status: res.status, body: j };
   }
-  async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
+  // fetch the net checkpoint via the RAW media type — the JSON repr only inlines content ≤1MB and the net
+  // is multi-MB, so the default base64 path returns empty content. Raw streams the whole file as text.
+  async function netRawFetch() {
+    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token) H.Authorization = "Bearer " + token;
+    return fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, { headers: H, cache: "no-store" });
+  }
+  async function pullNet() { var res = await netRawFetch(); if (res.status === 404) return null; if (!res.ok) throw new Error("pull net -> " + res.status); return JSON.parse(await res.text()); }
 
   // read-only "games trained" status — token-LESS (public repo). Cheap path: parse the net branch's head
-  // commit message ("net @ iter X (Y games)"); fall back to reading the checkpoint's games/iter field.
+  // commit message ("net @ iter X (Y games)"); fall back to reading the checkpoint's games/iter (raw).
   async function pullNetMeta() {
     var H = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
     var tk = $("token").value.trim(); if (tk) H.Authorization = "Bearer " + tk;   // optional — just raises the rate limit
     var r = await fetch("https://api.github.com/repos/" + repo + "/commits/" + BRANCH, { headers: H, cache: "no-store" });
     if (r.ok) { var j = await r.json(); var m = ((j.commit && j.commit.message) || "").match(/iter\s+(\d+)\s*\(([\d,]+)\s*games\)/i);
       if (m) return { iter: parseInt(m[1], 10), games: parseInt(m[2].replace(/,/g, ""), 10) }; }
-    var c = await fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, { headers: H, cache: "no-store" });
-    if (c.ok) { var o = JSON.parse(unb64((await c.json()).content)); return { iter: o.iter || 0, games: o.games || 0 }; }
+    var c = await netRawFetch();   // heavier fallback: pulls the whole net to read games/iter
+    if (c.ok) { var o = JSON.parse(await c.text()); return { iter: o.iter || 0, games: o.games || 0 }; }
     if (r.status === 403 || c.status === 403) throw new Error("rate-limited — try again shortly");
     return null;
   }
