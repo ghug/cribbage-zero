@@ -54,7 +54,7 @@
   <div id="status"></div>
   <div id="log"></div>
   <p class="note">The Zero side plays the net's policy — greedy by default, or MCTS when sims &gt; 0 (stronger but slower).
-  The recorded progress curve is the greedy (sims=0) baseline; record MCTS results only if you track them separately.
+  Recording requires ≥ 10000 balanced games AND sims = 0 (the greedy baseline the progress curve uses); MCTS runs are for inspection only.
   The hard bot is a vendored snapshot of the
   cribbage-trainer heuristic (win-prob discard + depth-1 pegging) — a fixed benchmark. Public domain (The Unlicense).</p>
 </div>
@@ -160,8 +160,11 @@
       var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
       $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
       last = { games: trained, vsRand: vsRand, vsHard: vsHard, testGames: games, sims: sims };
-      if (games >= 10000) { $("record").disabled = false; log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)"); }
-      else { $("record").disabled = true; log("eval done — " + games + " balanced games is below the 10000 minimum to record (raise Decks to ≥ 5000)"); }
+      var why = [];
+      if (sims !== 0) why.push("MCTS sims must be 0 (greedy baseline)");
+      if (games < 10000) why.push("need ≥ 10000 balanced games (Decks ≥ 5000)");
+      if (!why.length) { $("record").disabled = false; log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)"); }
+      else { $("record").disabled = true; log("eval done — not recordable: " + why.join("; ")); }
       status("done — not recorded");
     } catch (e) { log("error: " + e.message); status("error"); }
     busy = false; $("run").disabled = false;
@@ -170,10 +173,10 @@
   // manual approval step: push the last eval's two points to the progress branch
   async function recordLast() {
     if (busy || !last) return;
-    if (last.testGames < 10000) { status("need ≥ 10000 balanced games to record"); log("recording blocked: " + last.testGames + " balanced games is below the 10000 minimum"); return; }
+    if (last.testGames < 10000 || last.sims !== 0) { status("not recordable — need ≥ 10000 games and 0 MCTS sims"); log("recording blocked: " + last.testGames + " games, " + last.sims + " sims (need ≥ 10000 games and sims = 0)"); return; }
     token = $("token").value.trim();
     if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
-    if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%" + (last.sims ? "\n  MCTS sims: " + last.sims + "  ⚠ differs from the greedy (sims=0) baseline the curve uses" : ""))) { log("recording cancelled"); return; }
+    if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%")) { log("recording cancelled"); return; }
     busy = true; $("run").disabled = true; $("record").disabled = true;
     repo = $("repo").value.trim() || "ghug/cribbage-zero";
     try {
