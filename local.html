@@ -25,12 +25,6 @@
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
   #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
   #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:10px; }
-  .graph { background:rgba(0,0,0,.22); border:1px solid var(--line); border-radius:12px; margin:0 0 12px; padding:0 12px; }
-  .graph > summary { list-style:none; cursor:pointer; padding:11px 0; color:var(--mut); font:12px ui-monospace,Menlo,monospace; }
-  .graph > summary::-webkit-details-marker { display:none; }
-  .graph > summary::after { content:"\25B8"; float:right; color:var(--mut); }
-  .graph[open] > summary::after { content:"\25BE"; }
-  .graph canvas { width:100%; height:auto; display:block; padding-bottom:10px; }
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:140px; overflow:auto; white-space:pre-wrap; }
   .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
   .reset { color:var(--mut); font-size:12px; text-decoration:underline; cursor:pointer; }
@@ -69,10 +63,6 @@
   <div class="counter"><b id="count">0</b><span>games trained</span></div>
   <div id="progress"></div>
   <div id="stats"></div>
-  <details class="graph" id="graphBox">
-    <summary>Strength vs random — % over games played</summary>
-    <canvas id="chart" width="440" height="170"></canvas>
-  </details>
   <div id="log"></div>
   <p class="note">Each iteration: self-play games, then SGD-train on them. Progress is saved on this device
   every iteration and pushed to the GitHub <b>net</b> branch. On Start it resumes from whichever is newer,
@@ -115,9 +105,9 @@
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.17";   // repo release version (bumped every release); android versionName only catches up on an APK release
   var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
-  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROG_BRANCH = "progress", PROGPATH = "progress.csv";
+  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
-  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, graph = [];   // graph is loaded from / shown from progress.csv; self-play no longer generates points
+  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   function effortPct() { return Math.max(10, Math.min(100, parseInt($("effort").value, 10) || 100)); }
@@ -128,38 +118,13 @@
   function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
   function setRunning(on) { running = on; updateButtons(); }
   function render() { $("count").textContent = totalGames.toLocaleString(); }
-  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; o.graph = graph; return o; }   // LOCAL persistence (self-contained, keeps the graph too)
-  function pushCkpt() { var o = netToObj(net, iter); o.games = totalGames; return o; }   // PUSHED net file = weights + iter + games (graph lives in progress.csv)
-  function parseGraph(txt) {                                                         // progress.csv -> {graph, games, iter}
-    var graph = [], games = 0, iter = 0, lines = txt.split("\n");                     // games/iter only in the OLD header (transition fallback)
-    for (var i = 0; i < lines.length; i++) { var ln = lines[i];
-      if (ln[0] === "#") { var m = ln.match(/(\d+)\s*games,\s*iter\s*(\d+)/); if (m) { games = +m[1]; iter = +m[2]; } continue; }
-      if (!ln.trim() || ln.indexOf("games,") === 0) continue;
-      var c = ln.split(","); if (c.length >= 2) graph.push({ g: +c[0], p: +c[1] });
-    }
-    return { graph: graph, games: games, iter: iter };
-  }
+  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; return o; }   // net file = weights + iter + games (also used for localStorage)
   function showStats() {
     var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
     var s = "iter " + iter + " · loss " + (lastLoss ? lastLoss.toFixed(3) : "—") + " · ~" + gps.toFixed(1) + " games/s";
     $("stats").textContent = s;
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
-
-  // --- strength-vs-games chart ---
-  function drawGraph() {
-    var c = $("chart"); if (!c || !c.getContext) return;
-    var ctx = c.getContext("2d"), W = c.width, H = c.height, pad = 30; ctx.clearRect(0, 0, W, H);
-    ctx.strokeStyle = "rgba(47,107,77,0.5)"; ctx.fillStyle = "#a9c4b3"; ctx.font = "10px monospace"; ctx.lineWidth = 1;
-    [0, 25, 50, 75, 100].forEach(function (v) { var y = H - pad - (v / 100) * (H - pad - 8); ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 6, y); ctx.stroke(); ctx.fillText(v + "%", 4, y + 3); });
-    if (!graph.length) { ctx.fillText("no progress data yet", pad + 6, H / 2); return; }
-    var maxG = graph[graph.length - 1].g || 1;
-    var X = function (g) { return pad + (maxG ? g / maxG : 0) * (W - 6 - pad); }, Y = function (p) { return H - pad - (p / 100) * (H - pad - 8); };
-    ctx.strokeStyle = "#d6bc7a"; ctx.lineWidth = 2; ctx.beginPath();
-    graph.forEach(function (pt, i) { var x = X(pt.g), y = Y(pt.p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
-    ctx.fillStyle = "#f3ecd6"; graph.forEach(function (pt) { ctx.beginPath(); ctx.arc(X(pt.g), Y(pt.p), 2.5, 0, 7); ctx.fill(); });
-    ctx.fillStyle = "#a9c4b3"; ctx.fillText(maxG.toLocaleString() + " games", W - 92, H - 8);
-  }
 
   // --- local persistence ---
   function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && (typeof INPUT_DIM !== "number" || o.nIn === INPUT_DIM) && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
@@ -176,10 +141,9 @@
     return { status: res.status, body: j };
   }
   async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
-  async function pullGraph() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + PROG_BRANCH); return parseGraph(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
   async function pushNet() {
-    // pushes ONLY the net file (orphan commit). The strength graph lives on its own `progress` branch — untouched.
-    var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(pushCkpt())), encoding: "base64" });
+    // pushes ONLY the net file (orphan commit) — nothing else lives on the net branch.
+    var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(ckObj())), encoding: "base64" });
     var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [
       { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha }
     ] });
@@ -215,13 +179,12 @@
 
     var localO = loadLocalObj(), remoteO = null;
     if (token) { progress("checking GitHub…"); try { remoteO = await pullNet();
-      if (remoteO) { var pg = await pullGraph(); if (pg) { if (!remoteO.games) remoteO.games = pg.games; if (!remoteO.iter) remoteO.iter = pg.iter; if (pg.graph && pg.graph.length) remoteO.graph = pg.graph; } }   // graph from progress.csv; games/iter from the net file (fallback: old progress.csv header)
       log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
     if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
     var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
-    if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; graph = Array.isArray(best.graph) ? best.graph : []; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
-    else { net = freshNet(HID); iter = 0; totalGames = 0; graph = []; log("fresh net (hidden " + HID + ")"); }
-    render(); showStats(); drawGraph(); progress("");
+    if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
+    else { net = freshNet(HID); iter = 0; totalGames = 0; log("fresh net (hidden " + HID + ")"); }
+    render(); showStats(); progress("");
     if (!running) return;
     log("training started"); trainLoop();
   }
@@ -234,7 +197,7 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastLoss = 0; render(); showStats(); drawGraph(); log("local net reset to fresh (GitHub net branch untouched)"); }
+  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
@@ -244,7 +207,6 @@
   $("footer").addEventListener("click", function () { open($("aboutOverlay")); });
   $("aboutDone").addEventListener("click", function () { close($("aboutOverlay")); });
   $("openAbout").addEventListener("click", function () { close($("settingsOverlay")); open($("aboutOverlay")); });
-  $("graphBox").addEventListener("toggle", function () { if ($("graphBox").open) drawGraph(); });
 
   $("ver").textContent = VERSION; $("footerVer").textContent = VERSION;
   // restore config
@@ -255,7 +217,7 @@
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
   $("effort").addEventListener("change", function () { localStorage.setItem("cz_effort", $("effort").value); });
-  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; graph = Array.isArray(lo.graph) ? lo.graph : []; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
+  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
   $("start").addEventListener("click", start);
   $("wind").addEventListener("click", windDown);
   $("stop").addEventListener("click", stop);

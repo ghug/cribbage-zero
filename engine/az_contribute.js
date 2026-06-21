@@ -5,8 +5,8 @@
  * (training + GitHub sync); N WORKER threads each generate self-play against a net snapshot every round
  * and ship the labelled samples back. Self-play is the expensive part and fans out cleanly; training
  * stays single-writer in main. It pulls the net from the GitHub `net` branch, trains, and force-pushes it
- * back. The net file is weights + iter + games; the strength graph lives on a separate `progress` branch. The phone
- * interchangeable: each resumes from whatever the other last pushed.
+ * back. The net file is weights + iter + games, so the phone and this script are interchangeable:
+ * each resumes from whatever the other last pushed.
  *
  * SINGLE-WRITER: the net is one blob and the push is a force-push, so run only ONE trainer at a time
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
@@ -53,24 +53,15 @@ const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().l
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
-const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROG_BRANCH = "progress", PROGPATH = "progress.csv";
+const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
 const now = () => new Date().toLocaleTimeString();
 const log = (m) => console.log(`[${now()}] ${m}`);
 
 if (!TOKEN && !DRY) { console.error("az_contribute: set CZ_TOKEN (a GitHub PAT) or pass --dry"); process.exit(1); }
 
-// --- the net file is WEIGHTS + iter + games (the net's training position); progress.csv is PURELY the graph ---
+// --- the net file is WEIGHTS + iter + games (the net's training position) ---
 function ckpt(net, iter, games) { const o = netToObj(net, iter); o.games = games; return o; }   // {iter,games,nIn,nHid,nPol,W1,...}
-function parseGraph(txt) {                                                          // progress.csv -> {graph, games, iter}
-  const graph = []; let games = 0, iter = 0;                                        // games/iter only appear in the OLD header (transition fallback)
-  for (const ln of txt.split("\n")) {
-    if (ln[0] === "#") { const m = ln.match(/(\d+)\s*games,\s*iter\s*(\d+)/); if (m) { games = +m[1]; iter = +m[2]; } continue; }
-    if (!ln.trim() || ln.startsWith("games,")) continue;
-    const c = ln.split(","); if (c.length >= 2) graph.push({ g: +c[0], p: +c[1] });
-  }
-  return { graph, games, iter };
-}
 function validCkpt(o) {
   return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) &&
     o.W1[0].length === o.nIn && o.nIn === INPUT_DIM && Array.isArray(o.b1) && Array.isArray(o.Wv) &&
@@ -95,11 +86,6 @@ async function pullNet() {
     return JSON.parse(unb64(r.body.content)); }
   catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
 }
-async function pullGraph() {   // the strength graph lives on the separate `progress` branch, not the net branch
-  try { const r = await gh("GET", "/repos/" + REPO + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + PROG_BRANCH);
-    return parseGraph(unb64(r.body.content)); }
-  catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
-}
 async function pushNet(net, iter, games) {   // pushes ONLY the net file; progress.csv is on its own branch, untouched
   const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckpt(net, iter, games))), encoding: "base64" });
   const tree = await gh("POST", "/repos/" + REPO + "/git/trees", { tree: [
@@ -112,7 +98,7 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
 }
 
 (async () => {
-  let net, iter = 0, games = 0, graph = [];
+  let net, iter = 0, games = 0;
   if (TOKEN) {
     log("pulling net from " + REPO + " @ " + BRANCH + " …");
     let remote, pullErr = null;
@@ -123,10 +109,7 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
       log("dry run — training a throwaway local net (won't push)");
     } else if (remote && validCkpt(remote)) {
       net = netFromObj(remote);
-      let pg = null; try { pg = await pullGraph(); } catch (e) { log("progress.csv read failed: " + e.message); }
-      games = remote.games || (pg && pg.games) || 0;   // games/iter from the net file (fallback: old progress.csv header)
-      iter = remote.iter || (pg && pg.iter) || 0;
-      graph = (pg && pg.graph.length) ? pg.graph : (Array.isArray(remote.graph) ? remote.graph : []);   // graph from progress.csv (fallback: an old combined checkpoint)
+      games = remote.games || 0; iter = remote.iter || 0;   // games/iter live in the net file
       log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")");
     } else if (remote) {                                 // a net exists but doesn't match this build — a reset must be deliberate, not automatic
       log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ")");
@@ -136,7 +119,7 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
       log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
     }
   }
-  if (!net) { net = freshNet(HID); iter = 0; games = 0; graph = []; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
+  if (!net) { net = freshNet(HID); iter = 0; games = 0; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
   // spawn the self-play worker pool (one per core by default), kept alive across rounds
   const perWorker = Math.max(1, Math.round(GAMES / WORKERS)), perRound = perWorker * WORKERS;
