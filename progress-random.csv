@@ -1,4 +1,4 @@
-# cribbage-zero — net win% vs random (500 balanced games)
+# cribbage-zero — net win% vs random (1000 balanced games)
 games,winPct
 10000,54
 20000,53
