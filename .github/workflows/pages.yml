@@ -12,6 +12,7 @@ on:
       - "dev.html"
       - "eval.html"
       - "refresh-trainer.html"
+      - "release-trainer.html"
       - "local.html"
       - "worker.html"
       - "src/**"
@@ -46,7 +47,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/worker _site/src
-          cp dev.html eval.html refresh-trainer.html local.html worker.html _site/
+          cp dev.html eval.html refresh-trainer.html release-trainer.html local.html worker.html _site/
           cp worker/az_bundle.js _site/worker/
           cp src/winprob.js _site/src/
           touch _site/.nojekyll   # serve files verbatim

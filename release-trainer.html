@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Release the trainer</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --warn:#e0a64b; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:460px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  a { color:var(--gold); }
+  label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
+  input, textarea { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  textarea { min-height:84px; resize:vertical; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  button.act { width:100%; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; background:var(--warn); color:#2a1c05; margin:18px 0 8px; }
+  button:disabled { opacity:.4; }
+  #status { text-align:center; color:var(--gold); font:13px ui-monospace,Menlo,monospace; min-height:18px; margin:6px 0; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; min-height:64px; white-space:pre-wrap; margin-top:8px; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:16px; }
+  /* confirm pop-up */
+  .ovl { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; align-items:center; justify-content:center; padding:18px; z-index:20; }
+  .ovl.show { display:flex; }
+  .dlg { background:var(--bg2); border:1px solid var(--line); border-radius:16px; max-width:380px; width:100%; padding:20px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  .dlg h2 { margin:0 0 8px; font-size:17px; color:var(--warn); }
+  .dlg p { margin:0 0 6px; font-size:13.5px; color:var(--ink); }
+  .dlg .meta { font:12px ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:8px; padding:8px 10px; margin:10px 0; white-space:pre-wrap; }
+  .dlg .btns { display:flex; gap:10px; margin-top:14px; }
+  .dlg button { flex:1; padding:12px; border-radius:10px; border:0; font:600 15px inherit; cursor:pointer; }
+  .dlg .cancel { background:rgba(255,255,255,.12); color:var(--ink); }
+  .dlg .confirm { background:var(--warn); color:#2a1c05; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Release the trainer</h1>
+  <p class="sub">Dispatches cribbage-trainer's <b>Release trainer</b> workflow — it refreshes the Zero net,
+  finalizes the version, builds, tags, and publishes a <b>signed APK release</b>. <a href="dev.html">← tools</a></p>
+
+  <label for="token">GitHub token (Actions: write on the trainer repo)</label>
+  <input id="token" type="password" placeholder="ghp_…" autocapitalize="off" autocorrect="off" />
+  <div class="row">
+    <div><label for="repo">Trainer repo</label><input id="repo" value="ghug/cribbage-trainer" autocapitalize="off" autocorrect="off" /></div>
+    <div><label for="ref">Branch</label><input id="ref" value="dev" autocapitalize="off" autocorrect="off" /></div>
+  </div>
+  <label for="changelog">Changelog (what's-new text for this release)</label>
+  <textarea id="changelog" placeholder="e.g. Refreshed the Zero bot net; minor fixes."></textarea>
+
+  <button id="go" class="act">Release the trainer…</button>
+  <div id="status"></div>
+  <div id="log">Asks for confirmation, then dispatches the release workflow on GitHub Actions.</div>
+  <p class="note">This publishes a <b>real release</b> (bumps the version, tags, ships a signed APK). Needs a
+  token with the <b>workflow</b> / Actions:write scope on the trainer repo. Public domain (The Unlicense).</p>
+</div>
+
+<div class="ovl" id="ovl">
+  <div class="dlg">
+    <h2>Publish a trainer release?</h2>
+    <p>This kicks off a real, irreversible release — it bumps the version, commits to <b>dev</b> + <b>main</b>,
+    pushes a version tag, and publishes a signed APK to a GitHub Release.</p>
+    <div class="meta" id="dlgMeta"></div>
+    <div class="btns">
+      <button class="cancel" id="cancel">Cancel</button>
+      <button class="confirm" id="confirm">Release now</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var busy = false;
+  function status(m) { $("status").textContent = m; }
+  function log(m) { $("log").textContent = m; }
+  var WORKFLOW = "release.yml";
+
+  function showConfirm() {
+    if (busy) return;
+    var token = $("token").value.trim();
+    if (!token) { status("a token is required"); return; }
+    var repo = $("repo").value.trim() || "ghug/cribbage-trainer", ref = $("ref").value.trim() || "dev";
+    var cl = $("changelog").value.trim();
+    if (!cl) { status("a changelog is required"); return; }
+    $("dlgMeta").textContent = "repo:   " + repo + "\nbranch: " + ref + "\nchangelog:\n" + cl;
+    $("ovl").classList.add("show");
+  }
+  function hideConfirm() { $("ovl").classList.remove("show"); }
+
+  async function dispatch() {
+    hideConfirm();
+    if (busy) return;
+    var token = $("token").value.trim(), repo = $("repo").value.trim() || "ghug/cribbage-trainer",
+        ref = $("ref").value.trim() || "dev", cl = $("changelog").value.trim();
+    busy = true; $("go").disabled = true; status("dispatching …");
+    try {
+      var res = await fetch("https://api.github.com/repos/" + repo + "/actions/workflows/" + WORKFLOW + "/dispatches", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" },
+        body: JSON.stringify({ ref: ref, inputs: { changelog: cl } }),
+      });
+      if (res.status === 204) {
+        status("release dispatched ✓");
+        log("Release workflow dispatched on " + repo + " @ " + ref + ".\nIt refreshes the net, bumps the version, builds, tags, and publishes the signed APK.\nWatch it: https://github.com/" + repo + "/actions");
+        localStorage.setItem("cz_rel_repo", repo); localStorage.setItem("cz_rel_ref", ref);
+      } else {
+        var t = await res.text(); var j = null; try { j = JSON.parse(t); } catch (e) {}
+        status("failed (" + res.status + ")");
+        log("dispatch failed -> " + res.status + (j && j.message ? "\n" + j.message : "") + "\n(token needs the workflow / Actions:write scope on " + repo + ", and release.yml must exist on " + ref + ")");
+      }
+    } catch (e) { status("error"); log("error: " + e.message); }
+    busy = false; $("go").disabled = false;
+  }
+
+  if (localStorage.getItem("cz_rel_repo")) $("repo").value = localStorage.getItem("cz_rel_repo");
+  if (localStorage.getItem("cz_rel_ref")) $("ref").value = localStorage.getItem("cz_rel_ref");
+  $("go").addEventListener("click", showConfirm);
+  $("cancel").addEventListener("click", hideConfirm);
+  $("confirm").addEventListener("click", dispatch);
+  $("ovl").addEventListener("click", function (e) { if (e.target === $("ovl")) hideConfirm(); });
+})();
+</script>
+</body>
+</html>
