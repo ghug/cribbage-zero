@@ -36,7 +36,11 @@ async function gh(method, p, body) {
   if (res.status >= 400) { const e = new Error(method + " " + p.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : "")); e.status = res.status; throw e; }
   return j;
 }
-function validNet(o) { return o && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && Array.isArray(o.Wp) && Array.isArray(o.bp); }
+function validNet(o) {   // accepts the multi-layer (W/hidden) shape and the legacy single-layer (W1) shape
+  if (!o || !Array.isArray(o.Wp) || !Array.isArray(o.bp)) return false;
+  if (Array.isArray(o.W)) return Array.isArray(o.W[0]) && Array.isArray(o.W[0][0]) && o.W[0][0].length === o.nIn;
+  return Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn;
+}
 function stamp() { const d = new Date().toISOString(); return d.slice(0, 10).replace(/-/g, "") + "-" + d.slice(11, 16).replace(":", ""); }   // 20260621-1830
 
 async function currentNet() {

@@ -45,7 +45,7 @@ if (!isMainThread) {
 }
 
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
-const HID = 64, EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
+const HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
 const GAMES = parseInt(process.argv[2], 10) || 500;
 const SIMS = parseInt(process.argv[3], 10) || 50;
 const PUSH_EVERY = parseInt(process.argv[4], 10) || 5;
@@ -61,11 +61,12 @@ const log = (m) => console.log(`[${now()}] ${m}`);
 if (!TOKEN && !DRY) { console.error("az_contribute: set CZ_TOKEN (a GitHub PAT) or pass --dry"); process.exit(1); }
 
 // --- the net file is WEIGHTS + iter + games (the net's training position) ---
-function ckpt(net, iter, games) { const o = netToObj(net, iter); o.games = games; return o; }   // {iter,games,nIn,nHid,nPol,W1,...}
+function ckpt(net, iter, games) { const o = netToObj(net, iter); o.games = games; return o; }   // {iter,games,nIn,hidden,nPol,W,b,...}
 function validCkpt(o) {
-  return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) &&
-    o.W1[0].length === o.nIn && o.nIn === INPUT_DIM && Array.isArray(o.b1) && Array.isArray(o.Wv) &&
-    Array.isArray(o.Wp) && Array.isArray(o.bp);
+  if (!o || o.nIn !== INPUT_DIM || !Array.isArray(o.hidden) || o.hidden.length !== HIDDEN.length) return false;
+  for (let i = 0; i < HIDDEN.length; i++) if (o.hidden[i] !== HIDDEN[i]) return false;
+  if (!Array.isArray(o.W) || o.W.length !== HIDDEN.length || !Array.isArray(o.W[0]) || !Array.isArray(o.W[0][0]) || o.W[0][0].length !== o.nIn) return false;
+  return Array.isArray(o.b) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp);
 }
 
 // --- GitHub net-branch sync (orphan force-push = always one commit), ported from local.html ---
@@ -119,7 +120,7 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
       log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
     }
   }
-  if (!net) { net = freshNet(HID); iter = 0; games = 0; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
+  if (!net) { net = freshNet(HIDDEN); iter = 0; games = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
   // spawn the self-play worker pool (one per core by default), kept alive across rounds.
   // split GAMES across workers so every ROUND is exactly GAMES — no rounding drift (e.g. 500, not 495).

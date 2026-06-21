@@ -121,7 +121,7 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.24";   // repo release version (bumped every release); android versionName only catches up on an APK release
-  var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
+  var KEY = "cz_local_ckpt", HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
@@ -147,7 +147,13 @@
   function persistToken() { var t = $("token").value.trim(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
 
   // --- local persistence ---
-  function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && (typeof INPUT_DIM !== "number" || o.nIn === INPUT_DIM) && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
+  function validCkpt(o) {
+    if (!o || !Array.isArray(o.hidden) || o.hidden.length !== HIDDEN.length) return false;
+    for (var i = 0; i < HIDDEN.length; i++) if (o.hidden[i] !== HIDDEN[i]) return false;
+    if (typeof INPUT_DIM === "number" && o.nIn !== INPUT_DIM) return false;
+    if (!Array.isArray(o.W) || o.W.length !== HIDDEN.length || !Array.isArray(o.W[0]) || !Array.isArray(o.W[0][0]) || o.W[0][0].length !== o.nIn) return false;
+    return Array.isArray(o.b) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp);
+  }
   function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(o)) return o; } catch (e) {} return null; }
   function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(ckObj())); } catch (e) { log("local save failed: " + e.message); } }
 
@@ -241,7 +247,7 @@
     var localO = loadLocalObj();
     var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
     if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
-    else { net = freshNet(HID); iter = 0; totalGames = 0; log("fresh net (hidden " + HID + ")"); }
+    else { net = freshNet(HIDDEN); iter = 0; totalGames = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ")"); }
     render(); showStats(); progress("");
     if (!running) return;
     log("training started"); trainLoop();
@@ -256,7 +262,7 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  async function reset() { if (running) { log("stop first"); return; } if (!(await confirmModal("Reset local net?", "Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.", "Reset"))) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
+  async function reset() { if (running) { log("stop first"); return; } if (!(await confirmModal("Reset local net?", "Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.", "Reset"))) return; localStorage.removeItem(KEY); net = freshNet(HIDDEN); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }

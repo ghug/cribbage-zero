@@ -1,40 +1,54 @@
 #!/usr/bin/env node
 /* engine/az_net.js — the value+policy network for the from-random AlphaZero loop (layer 1).
  *
- * A hand-rolled MLP (no deps): one tanh hidden trunk feeding two heads — a scalar VALUE (tanh,
- * ∈[-1,1], the expected game result for the player to move) and POLICY logits over a fixed action
- * slot set (softmax is taken over the LEGAL slots at use time). Weights start random — tabula rasa.
- * Trained by SGD on AlphaZero's targets: value ← the actual game outcome z, policy ← the MCTS visit
- * distribution π.  Loss = ½(v−z)² + (−Σ_legal π·log softmax(logits)).
+ * A hand-rolled multilayer perceptron (no deps): a stack of ReLU hidden layers feeding two heads — a
+ * scalar VALUE (tanh, ∈[-1,1], the player-to-move's expected game result) and POLICY logits over the
+ * fixed action-slot set (softmax is taken over the LEGAL slots at use time). Weights start random —
+ * tabula rasa. Trained by SGD on AlphaZero's targets: value ← the actual outcome z, policy ← the MCTS
+ * visit distribution π.  Loss = ½(v−z)² + (−Σ_legal π·log softmax(logits)).
  *
- * This file is just the differentiable core; the game model, IS-MCTS, and the self-play/training
- * loop build on top. It ships with a numerical gradient check + a toy-learning test so we KNOW the
- * backprop is right before the rest depends on it.  Run: node engine/az_net.js
+ * The architecture is configurable: `new Net(nIn, hidden, nPol)` where `hidden` is an array of layer
+ * sizes (e.g. [256,256,256,256]) — or a single number for a one-hidden-layer net. The forward pass,
+ * the hand-written backprop, and (de)serialization all flow from that array. ReLU hidden layers use
+ * He-uniform init; pass an explicit seedW to override (the gradient check does). Ships with a numeric
+ * gradient check + a toy-learning test so we KNOW the backprop is right before the rest depends on it.
+ * Run: node engine/az_net.js
  */
 "use strict";
 
-function randn(scale) { return (Math.random() * 2 - 1) * scale; }
+function randu(r) { return (Math.random() * 2 - 1) * r; }
 
 class Net {
-  constructor(nIn, nHid, nPol, seedW = 0.3) {
-    this.nIn = nIn; this.nHid = nHid; this.nPol = nPol;
-    this.W1 = Array.from({ length: nHid }, () => Array.from({ length: nIn }, () => randn(seedW)));
-    this.b1 = new Array(nHid).fill(0);
-    this.Wv = Array.from({ length: nHid }, () => randn(seedW));
-    this.bv = 0;
-    this.Wp = Array.from({ length: nPol }, () => Array.from({ length: nHid }, () => randn(seedW)));
+  constructor(nIn, hidden, nPol, seedW = null) {
+    if (typeof hidden === "number") hidden = [hidden];
+    this.nIn = nIn; this.hidden = hidden.slice(); this.nPol = nPol;
+    this.nHid = hidden[hidden.length - 1];                       // last hidden width — the heads read this
+    const sizes = [nIn].concat(hidden);
+    this.W = []; this.b = [];                                    // W[l] is sizes[l+1] × sizes[l]; b[l] length sizes[l+1]
+    for (let l = 0; l < hidden.length; l++) {
+      const din = sizes[l], dout = sizes[l + 1], r = seedW != null ? seedW : Math.sqrt(6 / din);  // He-uniform for ReLU
+      this.W.push(Array.from({ length: dout }, () => Array.from({ length: din }, () => randu(r))));
+      this.b.push(new Array(dout).fill(0));
+    }
+    const last = this.nHid, rh = seedW != null ? seedW : Math.sqrt(6 / last);
+    this.Wv = Array.from({ length: last }, () => randu(rh)); this.bv = 0;
+    this.Wp = Array.from({ length: nPol }, () => Array.from({ length: last }, () => randu(rh)));
     this.bp = new Array(nPol).fill(0);
   }
 
   forward(x) {
-    const { nHid, nPol } = this;
-    const h = new Array(nHid), z1 = new Array(nHid);
-    for (let i = 0; i < nHid; i++) { let s = this.b1[i], Wi = this.W1[i]; for (let k = 0; k < this.nIn; k++) s += Wi[k] * x[k]; z1[i] = s; h[i] = Math.tanh(s); }
-    let zv = this.bv; for (let i = 0; i < nHid; i++) zv += this.Wv[i] * h[i];
+    const acts = [x]; let a = x;                                 // acts[l] = input to layer l (acts[0] = x)
+    for (let l = 0; l < this.W.length; l++) {
+      const W = this.W[l], b = this.b[l], dout = b.length, din = a.length, o = new Array(dout);
+      for (let i = 0; i < dout; i++) { let s = b[i], Wi = W[i]; for (let k = 0; k < din; k++) s += Wi[k] * a[k]; o[i] = s > 0 ? s : 0; }  // ReLU
+      a = o; acts.push(a);
+    }
+    const hLast = a, last = hLast.length;
+    let zv = this.bv; for (let i = 0; i < last; i++) zv += this.Wv[i] * hLast[i];
     const v = Math.tanh(zv);
-    const logits = new Array(nPol);
-    for (let j = 0; j < nPol; j++) { let s = this.bp[j], Wj = this.Wp[j]; for (let i = 0; i < nHid; i++) s += Wj[i] * h[i]; logits[j] = s; }
-    return { h, v, logits };
+    const logits = new Array(this.nPol);
+    for (let j = 0; j < this.nPol; j++) { let s = this.bp[j], Wj = this.Wp[j]; for (let i = 0; i < last; i++) s += Wj[i] * hLast[i]; logits[j] = s; }
+    return { acts, h: hLast, v, logits };
   }
 
   // masked softmax over the legal slots (legal = boolean array length nPol)
@@ -48,27 +62,34 @@ class Net {
 
   // one SGD step on a single example; returns the loss. pi: target visit dist (0 on illegal), z: outcome.
   trainStep(x, z, pi, legal, lr, cPol = 1.0) {
-    const { nIn, nHid, nPol } = this;
-    const f = this.forward(x), h = f.h, v = f.v;
+    const nPol = this.nPol;
+    const f = this.forward(x), acts = f.acts, hLast = f.h, v = f.v, last = hLast.length;
     const p = Net.softmax(f.logits, legal);
 
-    // --- gradients ---
-    // value head
-    const dv = (v - z), dzv = dv * (1 - v * v);          // ½(v−z)² → dL/dzv via tanh'
-    // policy head: softmax+cross-entropy → dlogit_j = p_j − pi_j (on legal; 0 on illegal)
-    const dlog = new Array(nPol).fill(0);
+    // --- head gradients (computed at the current weights, before any update) ---
+    const dv = (v - z), dzv = dv * (1 - v * v);                  // ½(v−z)² → dL/dzv via tanh'
+    const dlog = new Array(nPol).fill(0);                        // softmax+CE → dlogit_j = p_j − pi_j (legal only)
     for (let j = 0; j < nPol; j++) if (legal[j]) dlog[j] = cPol * (p[j] - pi[j]);
-    // backprop into hidden
-    const dh = new Array(nHid).fill(0);
-    for (let i = 0; i < nHid; i++) { let s = dzv * this.Wv[i]; for (let j = 0; j < nPol; j++) if (legal[j]) s += dlog[j] * this.Wp[j][i]; dh[i] = s; }
-    const dz1 = new Array(nHid); for (let i = 0; i < nHid; i++) dz1[i] = dh[i] * (1 - h[i] * h[i]);
+    // grad wrt the last hidden activation (uses pre-update head weights)
+    let dA = new Array(last);
+    for (let i = 0; i < last; i++) { let s = dzv * this.Wv[i]; for (let j = 0; j < nPol; j++) if (legal[j]) s += dlog[j] * this.Wp[j][i]; dA[i] = s; }
 
-    // --- SGD update ---
-    this.bv -= lr * dzv; for (let i = 0; i < nHid; i++) this.Wv[i] -= lr * dzv * h[i];
-    for (let j = 0; j < nPol; j++) if (legal[j]) { this.bp[j] -= lr * dlog[j]; const Wj = this.Wp[j]; for (let i = 0; i < nHid; i++) Wj[i] -= lr * dlog[j] * h[i]; }
-    for (let i = 0; i < nHid; i++) { this.b1[i] -= lr * dz1[i]; const Wi = this.W1[i]; for (let k = 0; k < nIn; k++) Wi[k] -= lr * dz1[i] * x[k]; }
+    // --- update heads ---
+    this.bv -= lr * dzv; for (let i = 0; i < last; i++) this.Wv[i] -= lr * dzv * hLast[i];
+    for (let j = 0; j < nPol; j++) if (legal[j]) { this.bp[j] -= lr * dlog[j]; const Wj = this.Wp[j]; for (let i = 0; i < last; i++) Wj[i] -= lr * dlog[j] * hLast[i]; }
 
-    // loss (for reporting)
+    // --- backprop through the ReLU hidden layers, last → first (dIn computed with pre-update W, then W updated) ---
+    for (let l = this.W.length - 1; l >= 0; l--) {
+      const aOut = acts[l + 1], aIn = acts[l], dout = aOut.length, din = aIn.length;
+      const dZ = new Array(dout);
+      for (let i = 0; i < dout; i++) dZ[i] = aOut[i] > 0 ? dA[i] : 0;   // ReLU'(z) = [aOut > 0]
+      let dIn = null;
+      if (l > 0) { dIn = new Array(din).fill(0); for (let i = 0; i < dout; i++) { const g = dZ[i]; if (g) { const Wi = this.W[l][i]; for (let k = 0; k < din; k++) dIn[k] += g * Wi[k]; } } }
+      const W = this.W[l], b = this.b[l];
+      for (let i = 0; i < dout; i++) { const g = dZ[i]; b[i] -= lr * g; if (g) { const Wi = W[i]; for (let k = 0; k < din; k++) Wi[k] -= lr * g * aIn[k]; } }
+      dA = dIn;
+    }
+
     let lp = 0; for (let j = 0; j < nPol; j++) if (legal[j] && pi[j] > 0) lp -= pi[j] * Math.log(Math.max(1e-12, p[j]));
     return 0.5 * dv * dv + cPol * lp;
   }
@@ -81,48 +102,48 @@ if (require.main === module) {
   let ok = 0, fail = 0;
   const check = (c, m) => { if (c) ok++; else { fail++; console.error("  ✗ " + m); } };
 
-  // loss of a net on one example (for finite-difference checks)
   function loss(net, x, z, pi, legal, cPol = 1.0) {
     const f = net.forward(x), p = Net.softmax(f.logits, legal);
     let lp = 0; for (let j = 0; j < pi.length; j++) if (legal[j] && pi[j] > 0) lp -= pi[j] * Math.log(Math.max(1e-12, p[j]));
     return 0.5 * (f.v - z) ** 2 + cPol * lp;
   }
-  // numerical gradient of the loss wrt a scalar at net.path (mutates+restores)
   function numGrad(net, x, z, pi, legal, get, set) {
     const e = 1e-5, v0 = get();
     set(v0 + e); const lp = loss(net, x, z, pi, legal);
     set(v0 - e); const lm = loss(net, x, z, pi, legal);
     set(v0); return (lp - lm) / (2 * e);
   }
+  // gradient check on a MULTI-LAYER net. Analytic grads come from the exact relation Δθ = −lr·grad that
+  // trainStep applies (grads are all evaluated at the pre-step weights), compared to finite differences.
   {
-    const net = new Net(5, 6, 4, 0.5);
-    const x = [0.4, -0.7, 0.1, 0.9, -0.3], z = 0.3, legal = [true, true, false, true];
-    const pi = [0.5, 0.2, 0, 0.3];
-    // analytic grads: capture by running a no-update backward (recompute by hand from trainStep math)
-    const f = net.forward(x), p = Net.softmax(f.logits, legal);
-    const dzv = (f.v - z) * (1 - f.v * f.v);
-    const dlog = legal.map((L, j) => (L ? (p[j] - pi[j]) : 0));
-    // check dL/dWv[2] and dL/dbp[1] and dL/dW1[0][3] against numeric
-    const aWv2 = dzv * f.h[2];
-    const nWv2 = numGrad(net, x, z, pi, legal, () => net.Wv[2], (v) => net.Wv[2] = v);
-    check(Math.abs(aWv2 - nWv2) < 1e-6, `value-head grad matches numeric (${aWv2.toFixed(6)} vs ${nWv2.toFixed(6)})`);
-    const abp1 = dlog[1];
-    const nbp1 = numGrad(net, x, z, pi, legal, () => net.bp[1], (v) => net.bp[1] = v);
-    check(Math.abs(abp1 - nbp1) < 1e-6, `policy-head grad matches numeric (${abp1.toFixed(6)} vs ${nbp1.toFixed(6)})`);
-    // hidden-layer weight via full chain
-    let dh0 = dzv * net.Wv[0]; for (let j = 0; j < 4; j++) if (legal[j]) dh0 += dlog[j] * net.Wp[j][0];
-    const aW1_0_3 = dh0 * (1 - f.h[0] * f.h[0]) * x[3];
-    const nW1_0_3 = numGrad(net, x, z, pi, legal, () => net.W1[0][3], (v) => net.W1[0][3] = v);
-    check(Math.abs(aW1_0_3 - nW1_0_3) < 1e-6, `hidden-layer grad matches numeric (${aW1_0_3.toFixed(6)} vs ${nW1_0_3.toFixed(6)})`);
+    const net = new Net(5, [6, 4], 3, 0.5);                      // 2 hidden layers exercise the full chain
+    const x = [0.4, -0.7, 0.1, 0.9, -0.3], z = 0.3, legal = [true, true, false], pi = [0.6, 0.4, 0];   // pi normalized over legal slots (as MCTS produces)
+    const params = [
+      { name: "W[0][2][3]", get: () => net.W[0][2][3], set: (v) => (net.W[0][2][3] = v) },
+      { name: "b[0][1]", get: () => net.b[0][1], set: (v) => (net.b[0][1] = v) },
+      { name: "W[1][3][2]", get: () => net.W[1][3][2], set: (v) => (net.W[1][3][2] = v) },
+      { name: "b[1][2]", get: () => net.b[1][2], set: (v) => (net.b[1][2] = v) },
+      { name: "Wv[3]", get: () => net.Wv[3], set: (v) => (net.Wv[3] = v) },
+      { name: "Wp[0][1]", get: () => net.Wp[0][1], set: (v) => (net.Wp[0][1] = v) },
+      { name: "bp[2]", get: () => net.bp[2], set: (v) => (net.bp[2] = v) },
+    ];
+    const nG = params.map((pr) => numGrad(net, x, z, pi, legal, pr.get, pr.set));   // pristine net
+    const before = params.map((pr) => pr.get());
+    const lr = 1.0;
+    net.trainStep(x, z, pi, legal, lr);
+    params.forEach((pr, i) => {
+      const aG = (before[i] - pr.get()) / lr;                    // exact: trainStep did θ -= lr·grad
+      check(Math.abs(aG - nG[i]) < 1e-5, `${pr.name} grad matches numeric (${aG.toFixed(6)} vs ${nG[i].toFixed(6)})`);
+    });
   }
 
-  // toy learning: can it fit a known value+policy mapping from random init?
+  // toy learning: can a small ReLU net fit a known value+policy mapping from random init?
   {
-    const net = new Net(4, 16, 3, 0.3);
+    const net = new Net(4, [16, 16], 3);                         // 2 layers, He init
     const legal = [true, true, true];
     const sample = () => { const x = [Math.random(), Math.random(), Math.random(), Math.random()]; const z = Math.tanh(2 * (x[0] - x[1])); const best = x[0] > x[2] ? (x[1] > 0.5 ? 0 : 1) : 2; const pi = [0, 0, 0]; pi[best] = 1; return { x, z, pi, best }; };
     let before = 0; for (let i = 0; i < 400; i++) { const s = sample(); before += loss(net, s.x, s.z, s.pi, legal); } before /= 400;
-    for (let it = 0; it < 60000; it++) { const s = sample(); net.trainStep(s.x, s.z, s.pi, legal, 0.05); }
+    for (let it = 0; it < 60000; it++) { const s = sample(); net.trainStep(s.x, s.z, s.pi, legal, 0.03); }
     let after = 0, correct = 0; for (let i = 0; i < 1000; i++) { const s = sample(); after += loss(net, s.x, s.z, s.pi, legal); const f = net.forward(s.x); const p = Net.softmax(f.logits, legal); let arg = 0; for (let j = 1; j < 3; j++) if (p[j] > p[arg]) arg = j; if (arg === s.best) correct++; } after /= 1000;
     check(after < before * 0.5, `toy loss drops with training (${before.toFixed(3)} → ${after.toFixed(3)})`);
     check(correct / 1000 > 0.9, `toy policy accuracy after training: ${(correct / 10).toFixed(1)}%`);

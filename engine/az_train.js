@@ -19,6 +19,7 @@ const path = require("path");
 const { Net } = require("./az_net.js");
 const { CribGame } = require("./az_game.js");
 const { search } = require("./az_mcts.js");
+const { freshNet, netToObj, netFromObj } = require("./az_common.js");
 
 let _a = (Date.now() & 0x7fffffff) || 1;
 const rng = () => { _a |= 0; _a = (_a + 0x6d2b79f5) | 0; let t = Math.imul(_a ^ (_a >>> 15), 1 | _a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -73,7 +74,7 @@ function evalVsRandom(net, games) {
 const ITERS = parseInt(process.argv[2], 10) || 5;
 const GAMES = parseInt(process.argv[3], 10) || 40;
 const SIMS = parseInt(process.argv[4], 10) || 20;
-const HID = 64, CPUCT = 1.5, LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20;
+const HIDDEN = [256, 256, 256, 256], CPUCT = 1.5, LR = 0.02, EPOCHS = 2, EVAL = 200, EVAL_EVERY = 20;
 const DO_EVAL = process.argv.includes("--eval");   // off by default — just train; eval only when asked
 const CKPT = path.join(__dirname, "az_checkpoint.json");
 
@@ -81,14 +82,14 @@ const CKPT = path.join(__dirname, "az_checkpoint.json");
 let net, startIter = 0;
 if (fs.existsSync(CKPT) && !process.argv.includes("--fresh")) {
   const c = JSON.parse(fs.readFileSync(CKPT, "utf8"));
-  net = new Net(c.nIn, c.nHid, c.nPol); net.W1 = c.W1; net.b1 = c.b1; net.Wv = c.Wv; net.bv = c.bv; net.Wp = c.Wp; net.bp = c.bp;
+  net = netFromObj(c);
   startIter = c.iter || 0;
-  console.log(`resuming Cribbage Zero from checkpoint @ iter ${startIter} (hidden ${c.nHid})`);
+  console.log(`resuming Cribbage Zero from checkpoint @ iter ${startIter} (hidden ${JSON.stringify(net.hidden)})`);
 } else {
-  net = new Net(CribGame.INPUT_DIM, HID, NPOL, 0.3);
-  console.log(`fresh Cribbage Zero: hidden ${HID}`);
+  net = freshNet(HIDDEN);
+  console.log(`fresh Cribbage Zero: hidden ${JSON.stringify(HIDDEN)}`);
 }
-const saveCkpt = (it) => fs.writeFileSync(CKPT, JSON.stringify({ iter: it, nIn: net.nIn, nHid: net.nHid, nPol: net.nPol, W1: net.W1, b1: net.b1, Wv: net.Wv, bv: net.bv, Wp: net.Wp, bp: net.bp }));
+const saveCkpt = (it) => fs.writeFileSync(CKPT, JSON.stringify(netToObj(net, it)));
 
 console.log(`training ${ITERS} iters × ${GAMES} games × ${SIMS} sims (eval every ${EVAL_EVERY})`);
 const t0 = Date.now();

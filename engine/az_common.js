@@ -56,9 +56,16 @@ function evalVsRandom(net, games, rng) {
 }
 
 /* ---- net (de)serialization + atomic checkpoint/shard I/O ---- */
-function netToObj(net, iter) { return { iter, nIn: net.nIn, nHid: net.nHid, nPol: net.nPol, W1: net.W1, b1: net.b1, Wv: net.Wv, bv: net.bv, Wp: net.Wp, bp: net.bp }; }
-function netFromObj(o) { const n = new Net(o.nIn, o.nHid, o.nPol); n.W1 = o.W1; n.b1 = o.b1; n.Wv = o.Wv; n.bv = o.bv; n.Wp = o.Wp; n.bp = o.bp; return n; }
-function freshNet(hid) { return new Net(INPUT_DIM, hid, NPOL, 0.3); }
+// Format: { iter, nIn, hidden:[...], nHid(last), nPol, W:[...], b:[...], Wv, bv, Wp, bp }. netFromObj also
+// reads the legacy single-layer shape (W1/b1) so old archived checkpoints stay loadable.
+function netToObj(net, iter) { return { iter, nIn: net.nIn, hidden: net.hidden.slice(), nHid: net.nHid, nPol: net.nPol, W: net.W, b: net.b, Wv: net.Wv, bv: net.bv, Wp: net.Wp, bp: net.bp }; }
+function netFromObj(o) {
+  const hidden = o.hidden || [o.nHid];
+  const n = new Net(o.nIn, hidden, o.nPol);
+  if (o.W) { n.W = o.W; n.b = o.b; } else { n.W = [o.W1]; n.b = [o.b1]; }   // legacy single-layer
+  n.Wv = o.Wv; n.bv = o.bv; n.Wp = o.Wp; n.bp = o.bp; return n;
+}
+function freshNet(hidden) { return new Net(INPUT_DIM, hidden, NPOL); }
 function writeAtomic(file, str) { const tmp = file + ".tmp" + process.pid; fs.writeFileSync(tmp, str); fs.renameSync(tmp, file); }
 function loadCheckpoint(file) { if (!fs.existsSync(file)) return null; try { const o = JSON.parse(fs.readFileSync(file, "utf8")); return { net: netFromObj(o), iter: o.iter || 0 }; } catch (e) { return null; } }
 function saveCheckpoint(file, net, iter) { writeAtomic(file, JSON.stringify(netToObj(net, iter))); }

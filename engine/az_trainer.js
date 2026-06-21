@@ -16,7 +16,7 @@ const fs = require("fs");
 const path = require("path");
 const { freshNet, loadCheckpoint, saveCheckpoint, train, evalVsRandom, makeRng, netFromObj, netToObj } = require("./az_common.js");
 
-const HID = parseInt(process.argv[2], 10) || 64;
+const HIDDEN = [256, 256, 256, 256];
 const IDLE = (parseInt(process.argv[3], 10) || 20) * 1000;
 const DO_EVAL = process.argv.includes("--eval");
 const REMOTE = process.argv.includes("--remote");
@@ -43,7 +43,7 @@ if (REMOTE) {
       net = netFromObj(seed); iter = seed.iter || 0;
       await sync.putCheckpoint(netToObj(net, iter));
       console.log(`[trainer] seeded D1 from ${SEED} @ iter ${iter} (hidden ${net.nHid}) — continuing prior training`);
-    } else { net = freshNet(HID); iter = 0; await sync.putCheckpoint(netToObj(net, iter)); console.log(`[trainer] seeded fresh net (hidden ${HID})`); }
+    } else { net = freshNet(HIDDEN); iter = 0; await sync.putCheckpoint(netToObj(net, iter)); console.log(`[trainer] seeded fresh net (hidden ${JSON.stringify(HIDDEN)})`); }
     const t0 = Date.now(); let lastData = Date.now(), consumed = 0;
     for (;;) {
       const { shards } = await sync.getShards(LIMIT);
@@ -70,7 +70,7 @@ if (REMOTE) {
 fs.mkdirSync(DATA, { recursive: true });
 let ck = loadCheckpoint(CKPT), net, iter;
 if (ck) { net = ck.net; iter = ck.iter; console.log(`[trainer] resuming @ iter ${iter} (hidden ${net.nHid})`); }
-else { net = freshNet(HID); iter = 0; saveCheckpoint(CKPT, net, iter); console.log(`[trainer] fresh net (hidden ${HID}), initial checkpoint written`); }
+else { net = freshNet(HIDDEN); iter = 0; saveCheckpoint(CKPT, net, iter); console.log(`[trainer] fresh net (hidden ${JSON.stringify(HIDDEN)}), initial checkpoint written`); }
 
 const t0 = Date.now(); let lastData = Date.now(), consumed = 0;
 for (;;) {
