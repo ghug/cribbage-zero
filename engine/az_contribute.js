@@ -54,7 +54,7 @@ const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().l
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
-const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.json";
+const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.csv";
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
 const now = () => new Date().toLocaleTimeString();
 const log = (m) => console.log(`[${now()}] ${m}`);
@@ -89,8 +89,8 @@ async function pullNet() {
 }
 async function pushNet(net, iter, games, graph) {
   const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckObj(net, iter, games, graph))), encoding: "base64" });
-  const prog = { updated: new Date().toISOString(), games, iter, points: graph.map((pt) => ({ games: pt.g, vsRandomPct: pt.p })) };
-  const progBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(prog, null, 1)), encoding: "base64" });
+  const prog = "# cribbage-zero strength log — " + games + " games, iter " + iter + ", updated " + new Date().toISOString() + "\ngames,vsRandomPct\n" + graph.map((pt) => pt.g + "," + pt.p).join("\n") + "\n";
+  const progBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(prog), encoding: "base64" });
   const tree = await gh("POST", "/repos/" + REPO + "/git/trees", { tree: [
     { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
     { path: PROGPATH, mode: "100644", type: "blob", sha: progBlob.body.sha },
