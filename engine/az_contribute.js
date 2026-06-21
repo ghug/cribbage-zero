@@ -12,7 +12,7 @@
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
- *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5] [graphEvery=10000]
+ *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5]
  * Env:
  *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
  *   CZ_REPO     target repo (default "ghug/cribbage-zero")
@@ -28,7 +28,7 @@
 "use strict";
 const os = require("os");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
-const { makeRng, selfPlay, train, evalVsRandom, freshNet, netToObj, netFromObj, INPUT_DIM } = require("./az_common.js");
+const { makeRng, selfPlay, train, freshNet, netToObj, netFromObj, INPUT_DIM } = require("./az_common.js");
 
 /* ---------------- WORKER: self-play against a net snapshot, hand samples back ---------------- */
 if (!isMainThread) {
@@ -45,11 +45,10 @@ if (!isMainThread) {
 }
 
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
-const HID = 64, EPOCHS = 2, LR = 0.02, CPUCT = 1.5, EVAL = 100, EVAL_EVERY = 5;   // match local.html
+const HID = 64, EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
 const GAMES = parseInt(process.argv[2], 10) || 500;
 const SIMS = parseInt(process.argv[3], 10) || 50;
 const PUSH_EVERY = parseInt(process.argv[4], 10) || 5;
-const GRAPH_EVERY = parseInt(process.argv[5], 10) || 10000;
 const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
@@ -154,7 +153,7 @@ async function pushNet(net, iter, games, graph) {
     wk.postMessage({ net: netObj, games: perWorker });
   })));
 
-  log((DRY ? "[DRY] " : "") + WORKERS + " workers × " + perWorker + " games = " + perRound + "/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds, graph every " + GRAPH_EVERY.toLocaleString() + " games");
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers × " + perWorker + " games = " + perRound + "/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds");
   let stop = false;
   process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("stopping after this round…"); });
 
@@ -168,9 +167,6 @@ async function pushNet(net, iter, games, graph) {
     iter++; games += perRound;
     const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
     log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
-    if (iter % EVAL_EVERY === 0) log("vs random: " + (100 * evalVsRandom(net, EVAL, rng)).toFixed(1) + "%");
-    const lastG = graph.length ? graph[graph.length - 1].g : 0;
-    if (games - lastG >= GRAPH_EVERY) { const pct = +(100 * evalVsRandom(net, EVAL, rng)).toFixed(1); graph.push({ g: games, p: pct }); log("★ graph: " + pct + "% vs random @ " + games.toLocaleString() + " games"); }
     if (!DRY && TOKEN && iter % PUSH_EVERY === 0) {
       try { await pushNet(net, iter, games, graph); log("pushed net iter " + iter + " (" + games.toLocaleString() + " games)"); }
       catch (e) { log("push failed: " + e.message); }

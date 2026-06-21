@@ -88,8 +88,6 @@
     <input id="token" type="password" placeholder="ghp_… — leave blank to train only" autocapitalize="off" autocorrect="off" />
     <label for="repo">Repo (owner/name)</label>
     <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
-    <label for="graphEvery">Graph point every (games)</label>
-    <input id="graphEvery" type="number" min="1" value="10000" />
     <label for="effort">CPU effort % (lower = cooler &amp; slower; adjustable live)</label>
     <input id="effort" type="number" min="10" max="100" value="100" />
     <button class="done full" id="tomode" type="button">⇄ Switch to Cloudflare worker mode</button>
@@ -116,10 +114,10 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.16";   // repo release version (bumped every release); android versionName only catches up on an APK release
-  var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000, EVAL = 100, EVAL_EVERY = 5;
+  var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.csv";
-  var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, lastEval = null, gamesSession = 0, startTime = 0;
-  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, GRAPH_EVERY = 1000000, graph = [];
+  var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
+  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, graph = [];   // graph is loaded from / shown from progress.csv; self-play no longer generates points
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   function effortPct() { return Math.max(10, Math.min(100, parseInt($("effort").value, 10) || 100)); }
@@ -144,7 +142,6 @@
   function showStats() {
     var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
     var s = "iter " + iter + " · loss " + (lastLoss ? lastLoss.toFixed(3) : "—") + " · ~" + gps.toFixed(1) + " games/s";
-    if (lastEval != null) s += " · vs random " + (100 * lastEval).toFixed(0) + "%";
     $("stats").textContent = s;
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
@@ -155,7 +152,7 @@
     var ctx = c.getContext("2d"), W = c.width, H = c.height, pad = 30; ctx.clearRect(0, 0, W, H);
     ctx.strokeStyle = "rgba(47,107,77,0.5)"; ctx.fillStyle = "#a9c4b3"; ctx.font = "10px monospace"; ctx.lineWidth = 1;
     [0, 25, 50, 75, 100].forEach(function (v) { var y = H - pad - (v / 100) * (H - pad - 8); ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 6, y); ctx.stroke(); ctx.fillText(v + "%", 4, y + 3); });
-    if (!graph.length) { ctx.fillText("no data yet — first point at " + GRAPH_EVERY.toLocaleString() + " games", pad + 6, H / 2); return; }
+    if (!graph.length) { ctx.fillText("no progress data yet", pad + 6, H / 2); return; }
     var maxG = graph[graph.length - 1].g || 1;
     var X = function (g) { return pad + (maxG ? g / maxG : 0) * (W - 6 - pad); }, Y = function (p) { return H - pad - (p / 100) * (H - pad - 8); };
     ctx.strokeStyle = "#d6bc7a"; ctx.lineWidth = 2; ctx.beginPath();
@@ -206,10 +203,6 @@
       if (!running) break;
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
-      if (iter % EVAL_EVERY === 0) { progress("evaluating…"); await sleep(0); lastEval = evalVsRandom(net, EVAL, rng); showStats(); log("vs random: " + (100 * lastEval).toFixed(1) + "%"); }
-      // graph point each time we cross a GRAPH_EVERY milestone (fresh eval so the point is meaningful)
-      var lastG = graph.length ? graph[graph.length - 1].g : 0;
-      if (totalGames - lastG >= GRAPH_EVERY) { progress("evaluating for graph…"); await sleep(0); var pct = +(100 * evalVsRandom(net, EVAL, rng)).toFixed(1); lastEval = pct / 100; graph.push({ g: totalGames, p: pct }); saveLocal(); drawGraph(); showStats(); log("★ graph: " + pct + "% vs random @ " + totalGames.toLocaleString() + " games"); }
       if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
     }
     progress("");
@@ -219,8 +212,7 @@
   async function start() {
     if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
     token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
-    GRAPH_EVERY = Math.max(1, parseInt($("graphEvery").value, 10) || 1000000);
-    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_graphEvery", GRAPH_EVERY); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
+    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     if (token) localStorage.setItem("cz_token", token);
     setRunning(true); startTime = Date.now(); gamesSession = 0;
 
@@ -245,7 +237,7 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastEval = null; lastLoss = 0; render(); showStats(); drawGraph(); log("local net reset to fresh (GitHub net branch untouched)"); }
+  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; graph = []; lastLoss = 0; render(); showStats(); drawGraph(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
@@ -262,7 +254,6 @@
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
   if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
-  var _ge = localStorage.getItem("cz_graphEvery"); if (_ge && _ge !== "1000000") $("graphEvery").value = _ge;   // "1000000" was the old default → fall through to the new 10000
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
