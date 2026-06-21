@@ -5,7 +5,7 @@
  * (training + GitHub sync); N WORKER threads each generate self-play against a net snapshot every round
  * and ship the labelled samples back. Self-play is the expensive part and fans out cleanly; training
  * stays single-writer in main. It pulls the net from the GitHub `net` branch, trains, and force-pushes it
- * back in the identical checkpoint format (netToObj + {games, graph}) — so the phone and this script are
+ * back. The net file is weights + iter + games; the strength graph lives on a separate `progress` branch. The phone
  * interchangeable: each resumes from whatever the other last pushed.
  *
  * SINGLE-WRITER: the net is one blob and the push is a force-push, so run only ONE trainer at a time
@@ -53,7 +53,7 @@ const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().l
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
-const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.csv";
+const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROG_BRANCH = "progress", PROGPATH = "progress.csv";
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
 const now = () => new Date().toLocaleTimeString();
 const log = (m) => console.log(`[${now()}] ${m}`);
@@ -95,18 +95,15 @@ async function pullNet() {
     return JSON.parse(unb64(r.body.content)); }
   catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
 }
-async function pullGraph() {   // progress.csv is purely the strength graph (games/iter live in the net file now)
-  try { const r = await gh("GET", "/repos/" + REPO + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + BRANCH);
+async function pullGraph() {   // the strength graph lives on the separate `progress` branch, not the net branch
+  try { const r = await gh("GET", "/repos/" + REPO + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + PROG_BRANCH);
     return parseGraph(unb64(r.body.content)); }
   catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
 }
-async function pushNet(net, iter, games, graph) {
+async function pushNet(net, iter, games) {   // pushes ONLY the net file; progress.csv is on its own branch, untouched
   const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckpt(net, iter, games))), encoding: "base64" });
-  const prog = "# cribbage-zero strength vs random — % over games played\ngames,vsRandomPct\n" + graph.map((pt) => pt.g + "," + pt.p).join("\n") + "\n";
-  const progBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(prog), encoding: "base64" });
   const tree = await gh("POST", "/repos/" + REPO + "/git/trees", { tree: [
     { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
-    { path: PROGPATH, mode: "100644", type: "blob", sha: progBlob.body.sha },
   ] });
   const commit = await gh("POST", "/repos/" + REPO + "/git/commits", { message: "net @ iter " + iter + " (" + games + " games)", tree: tree.body.sha, parents: [] });
   let ref; try { ref = await gh("GET", "/repos/" + REPO + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
@@ -169,12 +166,12 @@ async function pushNet(net, iter, games, graph) {
     const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
     log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
     if (!DRY && TOKEN && iter % PUSH_EVERY === 0) {
-      try { await pushNet(net, iter, games, graph); log("pushed net iter " + iter + " (" + games.toLocaleString() + " games)"); }
+      try { await pushNet(net, iter, games); log("pushed net iter " + iter + " (" + games.toLocaleString() + " games)"); }
       catch (e) { log("push failed: " + e.message); }
     }
   }
   await Promise.all(workers.map((wk) => wk.terminate()));
-  if (!DRY && TOKEN) { try { await pushNet(net, iter, games, graph); log("final push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("final push failed: " + e.message); } }
+  if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("final push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("final push failed: " + e.message); } }
   log("stopped @ iter " + iter + " (" + games.toLocaleString() + " games, " + ((Date.now() - t0) / 1000).toFixed(0) + "s this run)");
   process.exit(0);
 })().catch((e) => { console.error("az_contribute:", e.stack || e.message); process.exit(1); });

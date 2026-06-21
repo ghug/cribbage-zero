@@ -115,7 +115,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.17";   // repo release version (bumped every release); android versionName only catches up on an APK release
   var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
-  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.csv";
+  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROG_BRANCH = "progress", PROGPATH = "progress.csv";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero", pushEvery = 10, graph = [];   // graph is loaded from / shown from progress.csv; self-play no longer generates points
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
@@ -176,15 +176,12 @@
     return { status: res.status, body: j };
   }
   async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
-  async function pullGraph() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + BRANCH); return parseGraph(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
+  async function pullGraph() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + PROG_BRANCH); return parseGraph(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
   async function pushNet() {
-    // net + a separate human-readable progress.csv (a strength time-series), both in one orphan commit
+    // pushes ONLY the net file (orphan commit). The strength graph lives on its own `progress` branch — untouched.
     var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(pushCkpt())), encoding: "base64" });
-    var prog = "# cribbage-zero strength vs random — % over games played\ngames,vsRandomPct\n" + graph.map(function (pt) { return pt.g + "," + pt.p; }).join("\n") + "\n";
-    var progBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(prog), encoding: "base64" });
     var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [
-      { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
-      { path: PROGPATH, mode: "100644", type: "blob", sha: progBlob.body.sha }
+      { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha }
     ] });
     var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter + " (" + totalGames + " games)", tree: tree.body.sha, parents: [] });
     var ref; try { ref = await gh("GET", "/repos/" + repo + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
