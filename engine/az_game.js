@@ -118,58 +118,50 @@ class CribGame {
   encode(player) {                                         // fixed-length features from player's info set
     const f = [];
     const opp = 1 - player;
-    // own hand BY POSITION (rank one-hot + suit one-hot), so the policy can target a specific card.
-    // 6 positions: discard = the six dealt cards; pegging = the current peg hand (rest zero-padded).
-    const hand = this.phase === "discard" ? this.six[player] : (this._pegHand ? this._pegHand[player] : this.kept[player]);
-    for (let p = 0; p < 6; p++) {
-      const c = hand && hand[p];
+    const pushCard = (c) => {                               // rank one-hot (13) + suit one-hot (4)
       const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
       if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
       for (const x of rr) f.push(x); for (const x of ss) f.push(x);
+    };
+    // own hand BY POSITION (rank + suit), so the policy can target a specific card. 6 slots:
+    //   discard → the six dealt cards.
+    //   pegging → slots 0..3 = the current peg hand (policy slot k = play hand[k]); slots 4,5 = my two
+    //             discards (always free — the peg hand is ≤4). So the block is "my original six minus what
+    //             I've played", with the discards parked at the end.
+    let slots;
+    if (this.phase === "discard") slots = (this.six[player] || []).slice(0, 6);
+    else {
+      const ph = (this._pegHand && this._pegHand[player]) || [];
+      const kept = this.kept[player] || [], six = (this.six && this.six[player]) || [];
+      const disc = six.filter((c) => kept.indexOf(c) === -1);
+      slots = [ph[0], ph[1], ph[2], ph[3], disc[0], disc[1]];
     }
-    // phase one-hot, who deals (NB: "to-act-is-me" is omitted — it's always 1, since we only ever
-    // encode the player about to move, so it carried no information)
-    f.push(this.phase === "discard" ? 1 : 0, this.phase === "peg" ? 1 : 0, this.dealer === player ? 1 : 0);
+    for (let p = 0; p < 6; p++) pushCard(slots[p]);
+    // phase (1 = peg, 0 = discard) and who deals ("to-act-is-me" is omitted — always 1, no information).
+    f.push(this.phase === "peg" ? 1 : 0, this.dealer === player ? 1 : 0);
     // scores (to-go, normalized) — mine then opp
     f.push((TARGET - this.scores[player]) / TARGET, (TARGET - this.scores[opp]) / TARGET);
-    // pegging context: count, my/opp peg-hand sizes
-    f.push((this._count || 0) / 31, this.phase === "peg" ? this._pegHand[player].length / 4 : 0, this.phase === "peg" ? this._pegHand[opp].length / 4 : 0);
-    // lowest count the OPPONENT said "go" this hand (reveals they hold no card ≤ 31 - count)
-    f.push(((this._goLow && this._goLow[opp]) || 0) / 31);
-    // every card PLAYED this hand, in order (rank one-hot + suit one-hot), last-6 window (oldest..newest).
-    // ≤6 cards are on the table at any real decision (7+ ⇒ your last card is forced), so the window never
-    // truncates a decision. Suits are kept: they feed the show's flushes, so they bear on the result.
+    // pip count to 31 (gates 15s/31 and legality) — 0 outside pegging
+    f.push((this._count || 0) / 31);
+    // every card PLAYED this hand, in order (rank + suit), last-7 window (oldest..newest). ≤7 cards are
+    // ever on the table when encode() runs (the forced last-card node), so the window never truncates.
+    // Suits are kept: they feed the show's flushes, so they bear on the result.
     const played = (this.phase === "peg" && this._playedSuited) ? this._playedSuited : [];
-    const last6 = played.slice(-6), off = 6 - last6.length;
-    for (let p = 0; p < 6; p++) {
-      const c = p >= off ? last6[p - off] : null;
-      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
-      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
-      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
-    }
-    // live-pile mask: which of those 6 slots are in the CURRENT sub-pile (the rest are pre-reset, can't
-    // score). The current pile is the trailing `_pile.length` of the played sequence (it's a suffix).
-    const pileLen = (this.phase === "peg" && this._pile) ? Math.min(this._pile.length, 6) : 0;
-    for (let p = 0; p < 6; p++) f.push(p >= 6 - pileLen ? 1 : 0);
-    // my own two discards (rank one-hot + suit one-hot) — known to me, sitting in the crib (→ crib flush).
-    let disc = [];
-    if (this.phase === "peg" && this.six && this.six[player] && this.kept[player]) {
-      const kept = this.kept[player];
-      disc = this.six[player].filter((c) => kept.indexOf(c) === -1);
-    }
-    for (let p = 0; p < 2; p++) {
-      const c = disc[p];
-      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
-      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
-      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
-    }
+    const last7 = played.slice(-7), off = 7 - last7.length;
+    for (let p = 0; p < 7; p++) pushCard(p >= off ? last7[p - off] : null);
+    // my / opp peg-hand sizes (also marks where the live hand ends and the slot-4/5 discards begin)
+    f.push(this.phase === "peg" ? this._pegHand[player].length / 4 : 0, this.phase === "peg" ? this._pegHand[opp].length / 4 : 0);
+    // opponent's "go" headroom: 0 if no go this hand, else min(31 − lowest-go-count, 10)/10 — a lower bound
+    // on the pip value of their smallest remaining card (they were blocked even with that much room).
+    const gl = (this._goLow && this._goLow[opp]) || 0;
+    f.push(gl > 0 ? Math.min(31 - gl, 10) / 10 : 0);
+    // number of cards in the CURRENT sub-pile (0..7, normalized) — the live suffix of the played window
+    f.push((this.phase === "peg" && this._pile ? Math.min(this._pile.length, 7) : 0) / 7);
     // starter (rank + suit), known after the cut
-    const sr = new Array(13).fill(0), ssr = new Array(4).fill(0);
-    if (this.starter) { sr[this.starter.r - 1] = 1; ssr[this.starter.s] = 1; }
-    for (const x of sr) f.push(x); for (const x of ssr) f.push(x);
+    pushCard(this.starter);
     return f;
   }
-  static get INPUT_DIM() { return 6 * 17 + 3 + 2 + 3 + 1 + 6 * 17 + 6 + 2 * 17 + 17; }   // 270: hand(6×17) + phase2/dealer1 + scores2 + peg3 + go1 + played(6×17) + livemask6 + discards(2×17) + starter(17)
+  static get INPUT_DIM() { return 6 * 17 + 2 + 2 + 1 + 7 * 17 + 2 + 1 + 1 + 17; }   // 247: hand+discards(6×17) + phase1/dealer1 + scores2 + pip1 + played(7×17) + handsizes2 + gohead1 + seqlen1 + starter(17)
   static get NPOL() { return NPOL; }
 
   // clone with the opponent's hidden cards resampled from the unseen pool (for IS-MCTS determinization)
