@@ -1,0 +1,31 @@
+name: Snapshot the net
+
+# Archives the current net (the `net` branch checkpoint) to the `net-archive` branch as a milestone
+# restore point. The live net branch keeps no history (one orphan commit), so these snapshots are the
+# rollback safety net. Runs weekly, on demand (workflow_dispatch), and can be dispatched by the trainer
+# release. Uses the repo's own GITHUB_TOKEN — no extra secrets.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 0"   # weekly, Sunday 06:00 UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot-net
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Archive the current net to net-archive
+        env:
+          CZ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node engine/snapshot_net.js

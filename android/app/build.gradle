@@ -45,6 +45,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'eval.html'       // strength eval (records to the progress branch)
         include 'refresh-trainer.html'  // dispatch the trainer's net-refresh workflow
         include 'release-trainer.html'  // dispatch the trainer's full release (confirms first)
+        include 'snapshot.html'         // net snapshots + rollback (net-archive branch)
         include 'worker/**'       // the engine bundle (az_bundle.js)
         include 'src/winprob.js'  // eval.html needs winProbHand
     }

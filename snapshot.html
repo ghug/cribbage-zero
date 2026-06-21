@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Net snapshots</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --warn:#e0a64b; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:520px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 14px; }
+  a { color:var(--gold); }
+  label { display:block; font-size:12px; color:var(--mut); margin:10px 0 4px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btns { display:flex; gap:10px; margin:16px 0 8px; }
+  button.act { flex:1; padding:13px; border-radius:12px; border:0; font:600 15px inherit; cursor:pointer; }
+  #snap { background:var(--good); color:#10331f; } #refresh { background:rgba(255,255,255,.12); color:var(--ink); }
+  button:disabled { opacity:.4; cursor:default; }
+  #status { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:6px 0; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold); margin:18px 0 6px; }
+  .snap { display:flex; align-items:center; gap:10px; background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:6px 0; }
+  .snap .meta { flex:1; min-width:0; } .snap .meta b { font-size:14px; } .snap .meta span { display:block; color:var(--mut); font:11.5px ui-monospace,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .snap button { padding:8px 12px; border-radius:8px; border:1px solid var(--warn); background:transparent; color:var(--warn); font:600 13px inherit; cursor:pointer; }
+  #list .empty { color:var(--mut); font-size:13px; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; min-height:48px; white-space:pre-wrap; margin-top:10px; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+  .ovl { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; align-items:center; justify-content:center; padding:18px; z-index:20; }
+  .ovl.show { display:flex; }
+  .dlg { background:var(--bg2); border:1px solid var(--line); border-radius:16px; max-width:380px; width:100%; padding:20px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  .dlg h3 { margin:0 0 8px; font-size:17px; color:var(--warn); }
+  .dlg p { margin:0 0 6px; font-size:13.5px; }
+  .dlg .meta { font:12px ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:8px; padding:8px 10px; margin:10px 0; word-break:break-all; }
+  .dlg .btns2 { display:flex; gap:10px; margin-top:14px; }
+  .dlg button { flex:1; padding:12px; border-radius:10px; border:0; font:600 15px inherit; cursor:pointer; }
+  .dlg .cancel { background:rgba(255,255,255,.12); color:var(--ink); } .dlg .confirm { background:var(--warn); color:#2a1c05; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Net snapshots</h1>
+  <p class="sub">Milestone copies of the net on the
+  <a href="https://github.com/ghug/cribbage-zero/tree/net-archive" target="_blank" rel="noopener">net-archive</a> branch.
+  The live <code>net</code> branch keeps no history (one orphan commit), so these are your restore points.
+  <a href="dev.html">← tools</a></p>
+
+  <label for="token">GitHub token (Contents: write — needed to snapshot or roll back)</label>
+  <input id="token" type="password" placeholder="ghp_… — leave blank to just browse" autocapitalize="off" autocorrect="off" />
+  <div class="row">
+    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
+  </div>
+
+  <div class="btns">
+    <button id="snap" class="act">📸 Snapshot now</button>
+    <button id="refresh" class="act">↻ Refresh list</button>
+  </div>
+  <div id="status"></div>
+
+  <h2>Snapshots <span id="netnow" style="color:var(--mut);text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+  <div id="list"><div class="empty">— tap Refresh —</div></div>
+  <div id="log"></div>
+  <p class="note">Rollback re-pushes a snapshot as the live <code>net</code> branch's commit — it asks first.
+  Snapshots accumulate on net-archive (one file each, full history). Public domain (The Unlicense).</p>
+</div>
+
+<div class="ovl" id="ovl">
+  <div class="dlg">
+    <h3>Roll back the net?</h3>
+    <p>This OVERWRITES the live <code>net</code> branch with this snapshot. Trainers will resume from it on their
+    next pull. (The current net is just whatever's newest — snapshot it first if you might want it back.)</p>
+    <div class="meta" id="dlgMeta"></div>
+    <div class="btns2"><button class="cancel" id="cancel">Cancel</button><button class="confirm" id="confirm">Roll back</button></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var NET = "net", ARCH = "net-archive", CKPATH = "checkpoints/az_checkpoint.json", DIR = "snapshots";
+  var busy = false, pendingRollback = null;
+  function status(m) { $("status").textContent = m || ""; }
+  function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; }
+  function token() { return $("token").value.trim(); }
+  function repo() { return $("repo").value.trim() || "ghug/cribbage-zero"; }
+  function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function unb64(s) { return decodeURIComponent(escape(atob(s.replace(/\s/g, "")))); }
+  function stamp() { var d = new Date().toISOString(); return d.slice(0, 10).replace(/-/g, "") + "-" + d.slice(11, 16).replace(":", ""); }
+
+  async function gh(method, path, body) {
+    var headers = { Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) headers.Authorization = "Bearer " + token();
+    var res = await fetch("https://api.github.com/repos/" + repo() + path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined });
+    var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (res.status >= 400) { var e = new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : "")); e.status = res.status; throw e; }
+    return j;
+  }
+  function validNet(o) { return o && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && Array.isArray(o.Wp) && Array.isArray(o.bp); }
+  async function currentNet() { return JSON.parse(unb64((await gh("GET", "/contents/" + CKPATH + "?ref=" + NET)).content)); }
+
+  function parseName(n) { var m = n.match(/^(\d+)g-iter(\d+)-/); return m ? { games: +m[1], iter: +m[2] } : { games: null, iter: null }; }
+
+  async function refresh() {
+    status("loading…");
+    try {
+      try { var o = await currentNet(); $("netnow").textContent = "· live net: " + (o.games || 0).toLocaleString() + "g (iter " + (o.iter || 0) + ")"; } catch (e) {}
+      var items = [];
+      try { items = await gh("GET", "/contents/" + DIR + "?ref=" + ARCH); }
+      catch (e) { if (e.status !== 404) throw e; }
+      items = (items || []).filter(function (f) { return /\.json$/.test(f.name); }).sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+      var box = $("list"); box.innerHTML = "";
+      if (!items.length) { box.innerHTML = '<div class="empty">no snapshots yet — tap “Snapshot now”.</div>'; status(""); return; }
+      items.forEach(function (f) {
+        var p = parseName(f.name);
+        var row = document.createElement("div"); row.className = "snap";
+        var meta = document.createElement("div"); meta.className = "meta";
+        meta.innerHTML = "<b>" + (p.games != null ? p.games.toLocaleString() + " games · iter " + p.iter : f.name) + "</b><span>" + f.name + "</span>";
+        var btn = document.createElement("button"); btn.textContent = "Roll back";
+        btn.addEventListener("click", function () { askRollback(f.name, p); });
+        row.appendChild(meta); row.appendChild(btn); box.appendChild(row);
+      });
+      status(items.length + " snapshot" + (items.length === 1 ? "" : "s"));
+    } catch (e) { log("error: " + e.message); status("error"); }
+  }
+
+  async function snapshot() {
+    if (busy) return; if (!token()) { status("a token is required to snapshot"); return; }
+    busy = true; $("snap").disabled = true; status("snapshotting…");
+    try {
+      var o = await currentNet();
+      if (!validNet(o)) throw new Error("current net looks malformed — not archiving");
+      var games = o.games || 0, iter = o.iter || 0, name = games + "g-iter" + iter + "-" + stamp() + ".json";
+      // ensure net-archive exists (seed from the current net commit)
+      try { await gh("GET", "/git/ref/heads/" + ARCH); }
+      catch (e) { if (e.status !== 404) throw e; var base = await gh("GET", "/git/ref/heads/" + NET); await gh("POST", "/git/refs", { ref: "refs/heads/" + ARCH, sha: base.object.sha }); log("created net-archive branch"); }
+      await gh("PUT", "/contents/" + DIR + "/" + name, { message: "snapshot net @ " + games + " games (iter " + iter + ")", content: b64(JSON.stringify(o)), branch: ARCH });
+      log("archived " + DIR + "/" + name);
+      status("snapshot saved ✓"); await refresh();
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false; $("snap").disabled = false;
+  }
+
+  function askRollback(name, p) {
+    if (!token()) { status("a token is required to roll back"); return; }
+    pendingRollback = name;
+    $("dlgMeta").textContent = name + (p.games != null ? "\n→ " + p.games.toLocaleString() + " games, iter " + p.iter : "");
+    $("ovl").classList.add("show");
+  }
+  async function doRollback() {
+    $("ovl").classList.remove("show");
+    if (busy || !pendingRollback) return;
+    var name = pendingRollback; pendingRollback = null;
+    busy = true; status("rolling back…");
+    try {
+      var f = await gh("GET", "/contents/" + DIR + "/" + encodeURIComponent(name) + "?ref=" + ARCH);
+      var o = JSON.parse(unb64(f.content));
+      if (!validNet(o)) throw new Error("snapshot looks malformed — not restoring");
+      var blob = await gh("POST", "/git/blobs", { content: b64(JSON.stringify(o)), encoding: "base64" });
+      var tree = await gh("POST", "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.sha }] });
+      var commit = await gh("POST", "/git/commits", { message: "rollback: net @ iter " + (o.iter || 0) + " (" + (o.games || 0) + " games) from " + name, tree: tree.sha, parents: [] });
+      await gh("PATCH", "/git/refs/heads/" + NET, { sha: commit.sha, force: true });
+      log("rolled net back to " + name + " @ " + commit.sha.slice(0, 8));
+      status("rolled back ✓"); await refresh();
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false;
+  }
+
+  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
+  $("snap").addEventListener("click", function () { if (token()) localStorage.setItem("cz_token", token()); localStorage.setItem("cz_repo", repo()); snapshot(); });
+  $("refresh").addEventListener("click", refresh);
+  $("cancel").addEventListener("click", function () { $("ovl").classList.remove("show"); pendingRollback = null; });
+  $("confirm").addEventListener("click", doRollback);
+  $("ovl").addEventListener("click", function (e) { if (e.target === $("ovl")) { $("ovl").classList.remove("show"); pendingRollback = null; } });
+  refresh();
+})();
+</script>
+</body>
+</html>
