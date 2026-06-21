@@ -121,20 +121,23 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
   }
   if (!net) { net = freshNet(HID); iter = 0; games = 0; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
-  // spawn the self-play worker pool (one per core by default), kept alive across rounds
-  const perWorker = Math.max(1, Math.round(GAMES / WORKERS)), perRound = perWorker * WORKERS;
+  // spawn the self-play worker pool (one per core by default), kept alive across rounds.
+  // split GAMES across workers so every ROUND is exactly GAMES — no rounding drift (e.g. 500, not 495).
+  const base = Math.floor(GAMES / WORKERS), rem = GAMES % WORKERS;
+  const perWorkerCounts = Array.from({ length: WORKERS }, (_, w) => base + (w < rem ? 1 : 0));
+  const perRound = GAMES;
   const workers = [];
   for (let w = 0; w < WORKERS; w++) {
     const wk = new Worker(__filename, { workerData: { sims: SIMS, cpuct: CPUCT, seed: ((Date.now() ^ (w * 2654435761) ^ (process.pid << 8)) >>> 0) } });
     wk.on("error", (e) => { console.error(`[worker ${w}] ${e.stack || e.message}`); process.exit(1); });
     workers.push(wk);
   }
-  const playRound = (netObj) => Promise.all(workers.map((wk) => new Promise((resolve) => {
+  const playRound = (netObj) => Promise.all(workers.map((wk, w) => new Promise((resolve) => {
     wk.once("message", (m) => resolve(m.samples));
-    wk.postMessage({ net: netObj, games: perWorker });
+    wk.postMessage({ net: netObj, games: perWorkerCounts[w] });
   })));
 
-  log((DRY ? "[DRY] " : "") + WORKERS + " workers × " + perWorker + " games = " + perRound + "/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds");
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds");
   let stop = false;
   process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("stopping after this round…"); });
 
