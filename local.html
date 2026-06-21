@@ -52,7 +52,7 @@
 
   <div class="row">
     <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
-    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="100" /></div>
+    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="40" /></div>
   </div>
 
   <div class="btns">
@@ -218,15 +218,18 @@
 
   async function trainLoop() {
     var sims = parseInt($("sims").value, 10) || 20, gpi = parseInt($("games").value, 10) || 40;
-    while (running && !winding) {                  // wind-down: finish the current iteration, then stop
-      var data = [];
-      for (var g = 0; g < gpi && running; g++) { var gt = Date.now(); data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; progress("self-play " + (g + 1) + "/" + gpi + (effortPct() < 100 ? " · " + effortPct() + "% effort" : "")); await throttle(gt); }
+    while (running && !winding) {
+      var data = [], played = 0;
+      // wind-down (winding): finish the in-progress game, don't start the rest of the set
+      for (var g = 0; g < gpi && running && !winding; g++) { var gt = Date.now(); data = data.concat(selfPlay(net, sims, 1.5, rng)); gamesSession++; played++; progress("self-play " + (g + 1) + "/" + gpi + (effortPct() < 100 ? " · " + effortPct() + "% effort" : "")); await throttle(gt); }
       if (!running) break;
-      var loss = 0, nb = 0;
-      for (var i = 0; i < data.length && running; i += TRAIN_CHUNK) { var tt = Date.now(); loss += train(net, data.slice(i, i + TRAIN_CHUNK), EPOCHS, LR, rng); nb++; progress("training " + Math.min(i + TRAIN_CHUNK, data.length) + "/" + data.length); await throttle(tt); }
-      if (!running) break;
-      iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
-      log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
+      if (played > 0) {
+        var loss = 0, nb = 0;
+        for (var i = 0; i < data.length && running; i += TRAIN_CHUNK) { var tt = Date.now(); loss += train(net, data.slice(i, i + TRAIN_CHUNK), EPOCHS, LR, rng); nb++; progress("training " + Math.min(i + TRAIN_CHUNK, data.length) + "/" + data.length); await throttle(tt); }
+        if (!running) break;
+        iter++; totalGames += played; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
+        log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3) + (played < gpi ? " (wound down)" : ""));
+      }
       // no mid-run push — saved locally each iter; the GitHub net branch is pushed only on Wind down / Stop (finalizeStop)
     }
     progress("");

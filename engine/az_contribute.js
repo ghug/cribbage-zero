@@ -12,7 +12,7 @@
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
- *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=100]
+ *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=40]
  *   Pushes the net to GitHub ONLY on wind-down (Ctrl-C) — never periodically. It DOES write a local
  *   checkpoint file every round (no network) for crash safety, and resumes from it if it's ahead of the cloud.
  * Env:
@@ -40,11 +40,15 @@ if (!isMainThread) {
   const rng = makeRng((workerData.seed ^ (Date.now() & 0xffff)) >>> 0);
   let net = null;
   parentPort.on("message", (msg) => {
-    if (msg.stop) { process.exit(0); }
     if (msg.net) net = netFromObj(msg.net);
-    let data = [];
-    for (let g = 0; g < msg.games; g++) data = data.concat(selfPlay(net, workerData.sims, workerData.cpuct, rng));
-    parentPort.postMessage({ samples: data });   // {x,pi,legal,z} — plain arrays, structured-cloned back
+    const stop = workerData.stop;                 // SharedArrayBuffer-backed flag set on wind-down
+    let data = [], played = 0;
+    for (let g = 0; g < msg.games; g++) {
+      if (stop && Atomics.load(stop, 0)) break;   // wind-down: finish the in-progress game, don't start the next
+      data = data.concat(selfPlay(net, workerData.sims, workerData.cpuct, rng));
+      played++;
+    }
+    parentPort.postMessage({ samples: data, played: played });   // {x,pi,legal,z} arrays + games actually played
   });
   return;
 }
@@ -52,7 +56,7 @@ if (!isMainThread) {
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
 const HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
 const GAMES = parseInt(process.argv[2], 10) || 500;
-const SIMS = parseInt(process.argv[3], 10) || 100;
+const SIMS = parseInt(process.argv[3], 10) || 40;
 const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
@@ -143,33 +147,36 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
   const base = Math.floor(GAMES / WORKERS), rem = GAMES % WORKERS;
   const perWorkerCounts = Array.from({ length: WORKERS }, (_, w) => base + (w < rem ? 1 : 0));
   const perRound = GAMES;
+  const stopFlag = new Int32Array(new SharedArrayBuffer(4));   // shared with workers; set on wind-down to stop after the in-progress game
   const workers = [];
   for (let w = 0; w < WORKERS; w++) {
-    const wk = new Worker(__filename, { workerData: { sims: SIMS, cpuct: CPUCT, seed: ((Date.now() ^ (w * 2654435761) ^ (process.pid << 8)) >>> 0) } });
+    const wk = new Worker(__filename, { workerData: { sims: SIMS, cpuct: CPUCT, stop: stopFlag, seed: ((Date.now() ^ (w * 2654435761) ^ (process.pid << 8)) >>> 0) } });
     wk.on("error", (e) => { console.error(`[worker ${w}] ${e.stack || e.message}`); process.exit(1); });
     workers.push(wk);
   }
   const playRound = (netObj) => Promise.all(workers.map((wk, w) => new Promise((resolve) => {
-    wk.once("message", (m) => resolve(m.samples));
+    wk.once("message", (m) => resolve(m));
     wk.postMessage({ net: netObj, games: perWorkerCounts[w] });
   })));
 
   log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims · pushes only on wind-down (Ctrl-C)");
   let stop = false;
-  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("winding down — finishing this round, then pushing…"); });
+  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; Atomics.store(stopFlag, 0, 1); log("winding down — finishing the in-progress game, then pushing…"); });
 
   const t0 = Date.now();
   while (!stop) {
     const it0 = Date.now();
     const batches = await playRound(netToObj(net, iter));   // workers self-play against this snapshot, in parallel
-    if (stop) break;
-    let data = []; for (const b of batches) data = data.concat(b);
-    const loss = train(net, data, EPOCHS, LR, rng);
-    iter++; games += perRound;
-    const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
-    log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
-    try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
-    // no periodic GitHub push — the net is pushed once on wind-down (below); restart resumes from LOCAL.
+    let data = [], played = 0; for (const b of batches) { data = data.concat(b.samples); played += b.played; }   // played < round on wind-down
+    if (played > 0) {
+      const loss = train(net, data, EPOCHS, LR, rng);
+      iter++; games += played;
+      const gps = (played / ((Date.now() - it0) / 1000)).toFixed(1);
+      log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s" + (stop ? " (wound down)" : ""));
+      try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
+    }
+    // no periodic GitHub push — the net is pushed once on wind-down (below); restart resumes from LOCAL. The
+    // while(!stop) condition exits after this (possibly partial) round, then we push.
   }
   await Promise.all(workers.map((wk) => wk.terminate()));
   if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("wind-down push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("wind-down push failed: " + e.message); } }
