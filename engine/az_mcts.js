@@ -17,7 +17,7 @@ const { Net } = require("./az_net.js");
 const NPOL = 15;
 
 class MNode {
-  constructor() { this.N = 0; this.W = 0; this.P = null; this.expanded = false; this.children = new Map(); }
+  constructor() { this.N = 0; this.W = 0; this.P = null; this.expanded = false; this.children = new Array(NPOL).fill(null); }
 }
 
 function search(rootGame, net, nSims, cPuct, rng) {
@@ -41,15 +41,15 @@ function search(rootGame, net, nSims, cPuct, rng) {
     let bestSlot = -1, bestScore = -Infinity;
     for (let s = 0; s < NPOL; s++) {
       if (!legal[s]) continue;
-      const ch = node.children.get(s);
+      const ch = node.children[s];
       const cN = ch ? ch.N : 0, cW = ch ? ch.W : 0;
       const q = cN > 0 ? sign * (cW / cN) : 0;             // Q from the node-player's perspective
       const u = cPuct * node.P[s] * sqrtN / (1 + cN);
       const sc = q + u;
       if (sc > bestScore) { bestScore = sc; bestSlot = s; }
     }
-    let child = node.children.get(bestSlot);
-    if (!child) { child = new MNode(); node.children.set(bestSlot, child); }
+    let child = node.children[bestSlot];
+    if (!child) { child = new MNode(); node.children[bestSlot] = child; }
     game.step(bestSlot);
     const v = simulate(game, child);
     node.W += v; return v;
@@ -59,7 +59,7 @@ function search(rootGame, net, nSims, cPuct, rng) {
 
   // visit-count policy over the root's (determinization-independent, own) legal slots
   const policy = new Array(NPOL).fill(0); let tot = 0;
-  for (const [s, ch] of root.children) { policy[s] = ch.N; tot += ch.N; }
+  for (let s = 0; s < NPOL; s++) { const ch = root.children[s]; if (ch) { policy[s] = ch.N; tot += ch.N; } }
   if (tot > 0) for (let s = 0; s < NPOL; s++) policy[s] /= tot;
   // pick the most-visited slot (argmax); ties → first
   let move = -1, best = -1; for (let s = 0; s < NPOL; s++) if (policy[s] > best) { best = policy[s]; move = s; }

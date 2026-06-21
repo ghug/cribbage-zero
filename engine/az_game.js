@@ -118,10 +118,10 @@ class CribGame {
   encode(player) {                                         // fixed-length features from player's info set
     const f = [];
     const opp = 1 - player;
-    const pushCard = (c) => {                               // rank one-hot (13) + suit one-hot (4)
-      const rr = new Array(13).fill(0), ss = new Array(4).fill(0);
-      if (c) { rr[c.r - 1] = 1; ss[c.s] = 1; }
-      for (const x of rr) f.push(x); for (const x of ss) f.push(x);
+    const pushCard = (c) => {                               // rank one-hot (13) + suit one-hot (4), no temp arrays
+      const r = c ? c.r - 1 : -1, su = c ? c.s : -1;
+      for (let k = 0; k < 13; k++) f.push(k === r ? 1 : 0);
+      for (let k = 0; k < 4; k++) f.push(k === su ? 1 : 0);
     };
     // own hand BY POSITION (rank + suit), so the policy can target a specific card. 6 slots:
     //   discard → the six dealt cards.
@@ -169,13 +169,13 @@ class CribGame {
     const g = this.clone();
     const opp = 1 - player;
     // cards `player` can see: own cards (+played pile + starter); everything else is unseen → resample opp's
-    const seen = new Set();
+    const seen = new Uint8Array(52);                       // membership over the 52 cardIds — beats a Set of small ints
     const mine = g.phase === "discard" ? g.six[player] : g.kept[player];
-    for (const c of mine) seen.add(cardId(c));
-    if (g.starter) seen.add(cardId(g.starter));
-    if (g._playedSuited) for (const c of g._playedSuited) seen.add(cardId(c));   // played cards are face-up — pin them out of the resample pool
+    for (const c of mine) seen[cardId(c)] = 1;
+    if (g.starter) seen[cardId(g.starter)] = 1;
+    if (g._playedSuited) for (const c of g._playedSuited) seen[cardId(c)] = 1;   // played cards are face-up — pin them out of the resample pool
     const pool = [];
-    for (let r = 1; r <= 13; r++) for (let s = 0; s < 4; s++) { const c = { r, s }; if (!seen.has(cardId(c))) pool.push(c); }
+    for (let r = 1; r <= 13; r++) for (let s = 0; s < 4; s++) { if (!seen[(r - 1) * 4 + s]) pool.push({ r, s }); }
     for (let i = pool.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
     // give the opponent the right number of cards; keep ranks of any already-played opp cards consistent enough
     if (g.phase === "discard") { g.six[opp] = pool.slice(0, 6); }
