@@ -12,7 +12,8 @@
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
- *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5]
+ *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=100]
+ *   Trains in memory and pushes the net ONLY on wind-down (Ctrl-C) — never periodically.
  * Env:
  *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
  *   CZ_REPO     target repo (default "ghug/cribbage-zero")
@@ -47,8 +48,7 @@ if (!isMainThread) {
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
 const HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
 const GAMES = parseInt(process.argv[2], 10) || 500;
-const SIMS = parseInt(process.argv[3], 10) || 50;
-const PUSH_EVERY = parseInt(process.argv[4], 10) || 5;
+const SIMS = parseInt(process.argv[3], 10) || 100;
 const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
@@ -141,9 +141,9 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
     wk.postMessage({ net: netObj, games: perWorkerCounts[w] });
   })));
 
-  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds");
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims · pushes only on wind-down (Ctrl-C)");
   let stop = false;
-  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("stopping after this round…"); });
+  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("winding down — finishing this round, then pushing…"); });
 
   const t0 = Date.now();
   while (!stop) {
@@ -155,13 +155,10 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
     iter++; games += perRound;
     const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
     log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
-    if (!DRY && TOKEN && iter % PUSH_EVERY === 0) {
-      try { await pushNet(net, iter, games); log("pushed net iter " + iter + " (" + games.toLocaleString() + " games)"); }
-      catch (e) { log("push failed: " + e.message); }
-    }
+    // no periodic push — the net is pushed once on wind-down (below). A crash before then loses this run's work.
   }
   await Promise.all(workers.map((wk) => wk.terminate()));
-  if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("final push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("final push failed: " + e.message); } }
+  if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("wind-down push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("wind-down push failed: " + e.message); } }
   log("stopped @ iter " + iter + " (" + games.toLocaleString() + " games, " + ((Date.now() - t0) / 1000).toFixed(0) + "s this run)");
   process.exit(0);
 })().catch((e) => { console.error("az_contribute:", e.stack || e.message); process.exit(1); });

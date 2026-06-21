@@ -52,8 +52,7 @@
 
   <div class="row">
     <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
-    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="50" /></div>
-    <div><label for="push">iter / push</label><input id="push" type="number" min="1" value="10" /></div>
+    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="100" /></div>
   </div>
 
   <div class="btns">
@@ -68,8 +67,9 @@
   <div id="stats"></div>
   <div id="log"></div>
   <p class="note">Each iteration: self-play games, then SGD-train on them. Progress is saved on this device
-  every iteration and pushed to the GitHub <b>net</b> branch. On Start it resumes from whichever is newer,
-  local or GitHub. <span id="reset" class="reset">Reset local net</span>.</p>
+  every iteration; it is pushed to the GitHub <b>net</b> branch only when you <b>Wind down</b> or <b>Stop</b>
+  (not mid-run). On Start it resumes from whichever is newer, local or GitHub.
+  <span id="reset" class="reset">Reset local net</span>.</p>
   <p style="text-align:center; margin:14px 0 0;"><a href="dev.html" style="color:var(--gold); font-size:13px; text-decoration:none;">⚙ Tools — evaluate &amp; publish the net →</a></p>
   <p class="footer" id="footer">Cribbage Zero v<span id="footerVer">0.1.9</span></p>
 </div>
@@ -124,7 +124,7 @@
   var KEY = "cz_local_ckpt", HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
-  var token = "", repo = "ghug/cribbage-zero", pushEvery = 10;
+  var token = "", repo = "ghug/cribbage-zero";
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   function effortPct() { return Math.max(10, Math.min(100, parseInt($("effort").value, 10) || 100)); }
@@ -227,8 +227,7 @@
       if (!running) break;
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
-      token = $("token").value.trim(); persistToken();   // live re-read: a token added mid-run starts pushing
-      if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
+      // no mid-run push — saved locally each iter; the GitHub net branch is pushed only on Wind down / Stop (finalizeStop)
     }
     progress("");
     if (running && winding) finalizeStop();
@@ -236,8 +235,8 @@
 
   async function start() {
     if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
-    token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
-    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
+    token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero");
+    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     persistToken();
     // warn on a missing token — training will run read-only until one is added
     if (!token && !(await confirmModal("No GitHub token", "Training resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?", "Continue"))) return;
@@ -295,7 +294,6 @@
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
   var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
   $("remember").addEventListener("change", persistToken);
-  if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
