@@ -36,6 +36,7 @@
 
   <label for="token">GitHub token (Contents: write — only needed to record)</label>
   <input id="token" type="password" placeholder="ghp_… — only needed when you record" autocapitalize="off" autocorrect="off" />
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
   <div class="row">
     <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="500" /></div>
@@ -180,10 +181,13 @@
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
-  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  // token persistence is OPT-IN: only stored when "Remember" is checked, else in-memory (and any stored copy cleared)
+  function persistToken() { var t = $("token").value.trim(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
+  var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
   if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
+  $("remember").addEventListener("change", persistToken);
   $("run").addEventListener("click", function () { localStorage.setItem("cz_repo", $("repo").value.trim() || "ghug/cribbage-zero"); runEval(); });
-  $("record").addEventListener("click", function () { if ($("token").value.trim()) localStorage.setItem("cz_token", $("token").value.trim()); recordLast(); });
+  $("record").addEventListener("click", function () { persistToken(); recordLast(); });
 })();
 </script>
 </body>

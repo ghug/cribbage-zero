@@ -80,6 +80,7 @@
     <div class="modal-head"><h2>Settings</h2><button class="done" id="settingsDone" type="button">Done</button></div>
     <label for="token">GitHub token (Contents: write)</label>
     <input id="token" type="password" placeholder="ghp_… — leave blank to train only" autocapitalize="off" autocorrect="off" />
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:8px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
     <label for="repo">Repo (owner/name)</label>
     <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
     <label for="effort">CPU effort % (lower = cooler &amp; slower; adjustable live)</label>
@@ -129,6 +130,9 @@
     $("stats").textContent = s;
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
+
+  // token persistence is OPT-IN: only stored when "Remember" is checked, else kept in memory (and any stored copy cleared)
+  function persistToken() { var t = $("token").value.trim(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
 
   // --- local persistence ---
   function validCkpt(o) { return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn && (typeof INPUT_DIM !== "number" || o.nIn === INPUT_DIM) && Array.isArray(o.b1) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp); }
@@ -198,7 +202,7 @@
       if (!running) break;
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
-      token = $("token").value.trim(); if (token) localStorage.setItem("cz_token", token);   // live re-read: a token added mid-run starts pushing
+      token = $("token").value.trim(); persistToken();   // live re-read: a token added mid-run starts pushing
       if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
     }
     progress("");
@@ -209,7 +213,7 @@
     if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
     token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
     localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
-    if (token) localStorage.setItem("cz_token", token);
+    persistToken();
     // warn on a missing token — training will run read-only until one is added
     if (!token && !confirm("No GitHub token set.\n\nTraining resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?")) return;
     if (!token) log("⚠ no token — read-only: progress won't push until you add a token in Settings");
@@ -235,7 +239,7 @@
     if (!running) return;
     running = false; winding = false; updateButtons(); progress("");
     log("stopped (saved at iter " + iter + ")");
-    token = $("token").value.trim(); if (token) localStorage.setItem("cz_token", token);   // live re-read so a late token still does the final push
+    token = $("token").value.trim(); persistToken();   // live re-read so a late token still does the final push
     if (token) pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); });
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
@@ -254,7 +258,8 @@
   $("ver").textContent = VERSION; $("footerVer").textContent = VERSION;
   // restore config
   $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
-  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
+  $("remember").addEventListener("change", persistToken);
   if (localStorage.getItem("cz_push")) $("push").value = localStorage.getItem("cz_push");
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
