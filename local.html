@@ -130,7 +130,17 @@
   function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
   function setRunning(on) { running = on; updateButtons(); }
   function render() { $("count").textContent = totalGames.toLocaleString(); }
-  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; o.graph = graph; return o; }   // checkpoint = net + games + graph
+  function ckObj() { var o = netToObj(net, iter); o.games = totalGames; o.graph = graph; return o; }   // LOCAL persistence (self-contained); the PUSHED checkpoint is weights-only (netWeights)
+  function netWeights() { var o = netToObj(net, iter); delete o.iter; return o; }   // weights only — games/iter/graph live in progress.csv
+  function parseProgress(txt) {                                                      // progress.csv -> {games, iter, graph}
+    var games = 0, iter = 0, graph = [], lines = txt.split("\n");
+    for (var i = 0; i < lines.length; i++) { var ln = lines[i];
+      if (ln[0] === "#") { var m = ln.match(/(\d+)\s*games,\s*iter\s*(\d+)/); if (m) { games = +m[1]; iter = +m[2]; } continue; }
+      if (!ln.trim() || ln.indexOf("games,") === 0) continue;
+      var c = ln.split(","); if (c.length >= 2) graph.push({ g: +c[0], p: +c[1] });
+    }
+    return { games: games, iter: iter, graph: graph };
+  }
   function showStats() {
     var gps = gamesSession / Math.max(1, (Date.now() - startTime) / 1000);
     var s = "iter " + iter + " · loss " + (lastLoss ? lastLoss.toFixed(3) : "—") + " · ~" + gps.toFixed(1) + " games/s";
@@ -169,9 +179,10 @@
     return { status: res.status, body: j };
   }
   async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
+  async function pullProgress() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + BRANCH); return parseProgress(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
   async function pushNet() {
     // net + a separate human-readable progress.csv (a strength time-series), both in one orphan commit
-    var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(ckObj())), encoding: "base64" });
+    var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(netWeights())), encoding: "base64" });
     var prog = "# cribbage-zero strength log — " + totalGames + " games, iter " + iter + ", updated " + new Date().toISOString() + "\ngames,vsRandomPct\n" + graph.map(function (pt) { return pt.g + "," + pt.p; }).join("\n") + "\n";
     var progBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(prog), encoding: "base64" });
     var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [
@@ -214,7 +225,9 @@
     setRunning(true); startTime = Date.now(); gamesSession = 0;
 
     var localO = loadLocalObj(), remoteO = null;
-    if (token) { progress("checking GitHub…"); try { remoteO = await pullNet(); log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
+    if (token) { progress("checking GitHub…"); try { remoteO = await pullNet();
+      if (remoteO) { var rp = await pullProgress(); if (rp) { remoteO.games = rp.games; remoteO.iter = rp.iter; remoteO.graph = rp.graph; } }   // games/iter/graph from progress.csv (else the old combined checkpoint still carries them)
+      log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
     if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
     var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
     if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; graph = Array.isArray(best.graph) ? best.graph : []; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }

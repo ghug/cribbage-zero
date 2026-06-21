@@ -61,8 +61,17 @@ const log = (m) => console.log(`[${now()}] ${m}`);
 
 if (!TOKEN && !DRY) { console.error("az_contribute: set CZ_TOKEN (a GitHub PAT) or pass --dry"); process.exit(1); }
 
-// --- checkpoint shape (identical to local.html's ckObj) + validity guard ---
-function ckObj(net, iter, games, graph) { const o = netToObj(net, iter); o.games = games; o.graph = graph; return o; }
+// --- the checkpoint is WEIGHTS ONLY (no iter/games/graph — those live in progress.csv) ---
+function netWeights(net) { const o = netToObj(net, 0); delete o.iter; return o; }   // {nIn,nHid,nPol,W1,b1,Wv,bv,Wp,bp}
+function parseProgress(txt) {                                                        // progress.csv -> {games, iter, graph}
+  let games = 0, iter = 0; const graph = [];
+  for (const ln of txt.split("\n")) {
+    if (ln[0] === "#") { const m = ln.match(/(\d+)\s*games,\s*iter\s*(\d+)/); if (m) { games = +m[1]; iter = +m[2]; } continue; }
+    if (!ln.trim() || ln.startsWith("games,")) continue;
+    const c = ln.split(","); if (c.length >= 2) graph.push({ g: +c[0], p: +c[1] });
+  }
+  return { games, iter, graph };
+}
 function validCkpt(o) {
   return o && o.nHid === HID && Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) &&
     o.W1[0].length === o.nIn && o.nIn === INPUT_DIM && Array.isArray(o.b1) && Array.isArray(o.Wv) &&
@@ -87,8 +96,13 @@ async function pullNet() {
     return JSON.parse(unb64(r.body.content)); }
   catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
 }
+async function pullProgress() {   // games/iter/graph live in progress.csv, not the net file
+  try { const r = await gh("GET", "/repos/" + REPO + "/contents/" + encodeURIComponent(PROGPATH) + "?ref=" + BRANCH);
+    return parseProgress(unb64(r.body.content)); }
+  catch (e) { if (/-> 404/.test(e.message)) return null; throw e; }
+}
 async function pushNet(net, iter, games, graph) {
-  const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckObj(net, iter, games, graph))), encoding: "base64" });
+  const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(netWeights(net))), encoding: "base64" });
   const prog = "# cribbage-zero strength log — " + games + " games, iter " + iter + ", updated " + new Date().toISOString() + "\ngames,vsRandomPct\n" + graph.map((pt) => pt.g + "," + pt.p).join("\n") + "\n";
   const progBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(prog), encoding: "base64" });
   const tree = await gh("POST", "/repos/" + REPO + "/git/trees", { tree: [
@@ -112,7 +126,10 @@ async function pushNet(net, iter, games, graph) {
       if (!DRY) { console.error("az_contribute: refusing to start — can't read the cloud net, and training would push a net that overwrites it. Fix the token/connection and retry."); process.exit(1); }
       log("dry run — training a throwaway local net (won't push)");
     } else if (remote && validCkpt(remote)) {
-      net = netFromObj(remote); iter = remote.iter || 0; games = remote.games || 0; graph = Array.isArray(remote.graph) ? remote.graph : [];
+      net = netFromObj(remote);
+      let prog = null; try { prog = await pullProgress(); } catch (e) { log("progress.csv read failed: " + e.message); }
+      if (prog) { games = prog.games; iter = prog.iter; graph = prog.graph; }   // games/iter/graph come from progress.csv now
+      else { games = remote.games || 0; iter = remote.iter || 0; graph = Array.isArray(remote.graph) ? remote.graph : []; }   // transition: an old combined checkpoint still embeds them
       log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")");
     } else if (remote) {                                 // a net exists but doesn't match this build — a reset must be deliberate, not automatic
       log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ")");
