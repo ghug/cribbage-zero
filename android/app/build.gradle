@@ -41,7 +41,11 @@ tasks.register('syncWebAssets', Copy) {
         include 'index.html'      // mode router (trainer / worker)
         include 'local.html'      // on-device trainer (default mode)
         include 'worker.html'     // Cloudflare worker mode
-        include 'worker/**'
+        include 'dev.html'        // tools hub
+        include 'eval.html'       // strength eval (records to the progress branch)
+        include 'refresh-trainer.html'  // dispatch the trainer's net-refresh workflow
+        include 'worker/**'       // the engine bundle (az_bundle.js)
+        include 'src/winprob.js'  // eval.html needs winProbHand
     }
 }
 tasks.named('preBuild') { dependsOn 'syncWebAssets' }
