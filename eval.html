@@ -139,6 +139,7 @@
     if (busy) return; busy = true; $("run").disabled = true; $("record").disabled = true;
     $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
     repo = $("repo").value.trim() || "ghug/cribbage-zero";
+    token = $("token").value.trim();   // reads use the token when present (higher rate limit), token-less otherwise
     var decks = Math.max(1, parseInt($("decks").value, 10) || 500), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
