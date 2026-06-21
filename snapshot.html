@@ -116,7 +116,9 @@
         var p = parseName(f.name);
         var row = document.createElement("div"); row.className = "snap";
         var meta = document.createElement("div"); meta.className = "meta";
-        meta.innerHTML = "<b>" + (p.games != null ? p.games.toLocaleString() + " games · iter " + p.iter : f.name) + "</b><span>" + f.name + "</span>";
+        var mb = document.createElement("b"); mb.textContent = (p.games != null ? p.games.toLocaleString() + " games · iter " + p.iter : f.name);
+        var ms = document.createElement("span"); ms.textContent = f.name;   // remote filename -> textContent, never innerHTML
+        meta.appendChild(mb); meta.appendChild(ms);
         var btn = document.createElement("button"); btn.textContent = "Roll back";
         btn.addEventListener("click", function () { askRollback(f.name, p); });
         row.appendChild(meta); row.appendChild(btn); box.appendChild(row);
