@@ -23,6 +23,8 @@
   button:disabled { opacity:.4; }
   .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
   .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
+  .netinfo { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:0 0 6px; cursor:pointer; user-select:none; }
+  .netinfo:hover { color:var(--gold); }
   #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
   #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:10px; }
   #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; height:140px; overflow:auto; white-space:pre-wrap; }
@@ -61,6 +63,7 @@
   </div>
 
   <div class="counter"><b id="count">0</b><span>games trained</span></div>
+  <div id="netinfo" class="netinfo" title="Tap to refresh from GitHub">GitHub net: tap to check ↻</div>
   <div id="progress"></div>
   <div id="stats"></div>
   <div id="log"></div>
@@ -142,6 +145,34 @@
     return { status: res.status, body: j };
   }
   async function pullNet() { try { var r = await gh("GET", "/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH); return JSON.parse(unb64(r.body.content)); } catch (e) { if (/-> 404/.test(e.message)) return null; throw e; } }
+
+  // read-only "games trained" status — token-LESS (public repo). Cheap path: parse the net branch's head
+  // commit message ("net @ iter X (Y games)"); fall back to reading the checkpoint's games/iter field.
+  async function pullNetMeta() {
+    var H = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    var tk = $("token").value.trim(); if (tk) H.Authorization = "Bearer " + tk;   // optional — just raises the rate limit
+    var r = await fetch("https://api.github.com/repos/" + repo + "/commits/" + BRANCH, { headers: H });
+    if (r.ok) { var j = await r.json(); var m = ((j.commit && j.commit.message) || "").match(/iter\s+(\d+)\s*\(([\d,]+)\s*games\)/i);
+      if (m) return { iter: parseInt(m[1], 10), games: parseInt(m[2].replace(/,/g, ""), 10) }; }
+    var c = await fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, { headers: H });
+    if (c.ok) { var o = JSON.parse(unb64((await c.json()).content)); return { iter: o.iter || 0, games: o.games || 0 }; }
+    if (r.status === 403 || c.status === 403) throw new Error("rate-limited — try again shortly");
+    return null;
+  }
+  var refreshing = false;
+  async function refreshNetCount() {
+    if (refreshing) return; refreshing = true;
+    repo = ($("repo").value.trim() || "ghug/cribbage-zero");
+    $("netinfo").textContent = "checking GitHub…";
+    try {
+      var meta = await pullNetMeta();
+      if (meta && meta.games != null) {
+        if (!running && meta.games > totalGames) { totalGames = meta.games; iter = Math.max(iter, meta.iter || 0); render(); }   // surface the global total when idle
+        $("netinfo").textContent = "GitHub net: " + meta.games.toLocaleString() + " games (iter " + (meta.iter || 0) + ") ↻";
+      } else $("netinfo").textContent = "GitHub net: not found ↻";
+    } catch (e) { $("netinfo").textContent = "GitHub net: " + e.message + " ↻"; }
+    refreshing = false;
+  }
   async function pushNet() {
     // pushes ONLY the net file (orphan commit) — nothing else lives on the net branch.
     var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(ckObj())), encoding: "base64" });
@@ -219,6 +250,8 @@
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
   $("effort").addEventListener("change", function () { localStorage.setItem("cz_effort", $("effort").value); });
   var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
+  $("netinfo").addEventListener("click", refreshNetCount);
+  refreshNetCount();   // show the global trained-games count on open (token-less, best-effort)
   $("start").addEventListener("click", start);
   $("wind").addEventListener("click", windDown);
   $("stop").addEventListener("click", stop);
