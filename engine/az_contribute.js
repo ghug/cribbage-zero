@@ -1,23 +1,24 @@
 #!/usr/bin/env node
-/* engine/az_contribute.js — contribute self-play from a COMPUTER to the shared net.
+/* engine/az_contribute.js — contribute self-play from a COMPUTER to the shared net (multi-core).
  *
- * A headless Node port of local.html's trainer: it pulls the net from the GitHub `net` branch, runs
- * self-play + SGD (reusing the same engine the phone does), and force-pushes the improved net back —
- * so a PC can carry the same training the phone does, just much faster. The checkpoint format is
- * identical (netToObj + {games, graph}), so the phone and this script are interchangeable: each
- * resumes from whatever the other last pushed.
+ * A headless Node port of local.html's trainer, parallelised across cores: the MAIN thread owns the net
+ * (training + GitHub sync); N WORKER threads each generate self-play against a net snapshot every round
+ * and ship the labelled samples back. Self-play is the expensive part and fans out cleanly; training
+ * stays single-writer in main. It pulls the net from the GitHub `net` branch, trains, and force-pushes it
+ * back in the identical checkpoint format (netToObj + {games, graph}) — so the phone and this script are
+ * interchangeable: each resumes from whatever the other last pushed.
  *
  * SINGLE-WRITER: the net is one blob and the push is a force-push, so run only ONE trainer at a time
- * (this OR the phone, not both at once) — concurrent trainers overwrite each other's games. A PC so
- * outpaces a phone that you'd typically just let this drive and leave the phone off.
+ * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
  *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5] [graphEvery=10000]
  * Env:
- *   CZ_TOKEN  GitHub PAT with Contents:read+write on the repo (required, unless --dry)
- *   CZ_REPO   target repo (default "ghug/cribbage-zero")
+ *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
+ *   CZ_REPO     target repo (default "ghug/cribbage-zero")
+ *   CZ_WORKERS  self-play worker threads (default: CPU cores − 1)
  * Flags:
- *   --dry     train but never push (pull + self-play + train only — safe for a smoke test)
+ *   --dry       train but never push (pull + self-play + train only — safe smoke test)
  *
  * It NEVER overwrites the cloud net with a blank one: it only starts fresh when the branch genuinely has
  * no net (a clean 404). If it can't read the net, or the net is a different architecture, it refuses to
@@ -25,13 +26,31 @@
  * final push, then exits.
  */
 "use strict";
+const os = require("os");
+const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 const { makeRng, selfPlay, train, evalVsRandom, freshNet, netToObj, netFromObj, INPUT_DIM } = require("./az_common.js");
 
+/* ---------------- WORKER: self-play against a net snapshot, hand samples back ---------------- */
+if (!isMainThread) {
+  const rng = makeRng((workerData.seed ^ (Date.now() & 0xffff)) >>> 0);
+  let net = null;
+  parentPort.on("message", (msg) => {
+    if (msg.stop) { process.exit(0); }
+    if (msg.net) net = netFromObj(msg.net);
+    let data = [];
+    for (let g = 0; g < msg.games; g++) data = data.concat(selfPlay(net, workerData.sims, workerData.cpuct, rng));
+    parentPort.postMessage({ samples: data });   // {x,pi,legal,z} — plain arrays, structured-cloned back
+  });
+  return;
+}
+
+/* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
 const HID = 64, EPOCHS = 2, LR = 0.02, CPUCT = 1.5, EVAL = 100, EVAL_EVERY = 5;   // match local.html
 const GAMES = parseInt(process.argv[2], 10) || 500;
 const SIMS = parseInt(process.argv[3], 10) || 50;
 const PUSH_EVERY = parseInt(process.argv[4], 10) || 5;
 const GRAPH_EVERY = parseInt(process.argv[5], 10) || 10000;
+const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
@@ -105,19 +124,32 @@ async function pushNet(net, iter, games, graph) {
   }
   if (!net) { net = freshNet(HID); iter = 0; games = 0; graph = []; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
-  log((DRY ? "[DRY] " : "") + GAMES + " games/iter × " + SIMS + " sims, push every " + PUSH_EVERY + " iters, graph every " + GRAPH_EVERY.toLocaleString() + " games");
-  let stop = false, pushing = Promise.resolve();
-  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("stopping after this iteration…"); });
+  // spawn the self-play worker pool (one per core by default), kept alive across rounds
+  const perWorker = Math.max(1, Math.round(GAMES / WORKERS)), perRound = perWorker * WORKERS;
+  const workers = [];
+  for (let w = 0; w < WORKERS; w++) {
+    const wk = new Worker(__filename, { workerData: { sims: SIMS, cpuct: CPUCT, seed: ((Date.now() ^ (w * 2654435761) ^ (process.pid << 8)) >>> 0) } });
+    wk.on("error", (e) => { console.error(`[worker ${w}] ${e.stack || e.message}`); process.exit(1); });
+    workers.push(wk);
+  }
+  const playRound = (netObj) => Promise.all(workers.map((wk) => new Promise((resolve) => {
+    wk.once("message", (m) => resolve(m.samples));
+    wk.postMessage({ net: netObj, games: perWorker });
+  })));
+
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers × " + perWorker + " games = " + perRound + "/round · " + SIMS + " sims, push every " + PUSH_EVERY + " rounds, graph every " + GRAPH_EVERY.toLocaleString() + " games");
+  let stop = false;
+  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; log("stopping after this round…"); });
 
   const t0 = Date.now();
   while (!stop) {
     const it0 = Date.now();
-    let data = [];
-    for (let g = 0; g < GAMES && !stop; g++) data = data.concat(selfPlay(net, SIMS, CPUCT, rng));
-    if (stop && data.length === 0) break;
+    const batches = await playRound(netToObj(net, iter));   // workers self-play against this snapshot, in parallel
+    if (stop) break;
+    let data = []; for (const b of batches) data = data.concat(b);
     const loss = train(net, data, EPOCHS, LR, rng);
-    iter++; games += GAMES;
-    const gps = (GAMES / ((Date.now() - it0) / 1000)).toFixed(1);
+    iter++; games += perRound;
+    const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
     log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
     if (iter % EVAL_EVERY === 0) log("vs random: " + (100 * evalVsRandom(net, EVAL, rng)).toFixed(1) + "%");
     const lastG = graph.length ? graph[graph.length - 1].g : 0;
@@ -127,6 +159,7 @@ async function pushNet(net, iter, games, graph) {
       catch (e) { log("push failed: " + e.message); }
     }
   }
+  await Promise.all(workers.map((wk) => wk.terminate()));
   if (!DRY && TOKEN) { try { await pushNet(net, iter, games, graph); log("final push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("final push failed: " + e.message); } }
   log("stopped @ iter " + iter + " (" + games.toLocaleString() + " games, " + ((Date.now() - t0) / 1000).toFixed(0) + "s this run)");
   process.exit(0);

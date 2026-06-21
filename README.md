@@ -50,6 +50,9 @@ node engine/az_contribute.js --dry          # pull + self-play + train, but NEVE
 
 - `CZ_TOKEN` — a GitHub PAT with **Contents: read+write** on the repo. `CZ_REPO` overrides the target
   (default `ghug/cribbage-zero`).
+- **Multi-core:** it fans self-play across your CPU cores automatically — the main thread owns the net
+  (training + sync) while N worker threads generate self-play in parallel. Override the worker count with
+  `CZ_WORKERS` (default: cores − 1).
 - It resumes from whatever the phone/another computer last pushed, and shares the **same** checkpoint
   format — so they're interchangeable.
 - **It won't throw out the cloud net.** It only starts fresh when the branch genuinely has *no* net (a
