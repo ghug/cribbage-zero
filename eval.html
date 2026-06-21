@@ -38,7 +38,7 @@
   <input id="token" type="password" placeholder="ghp_… — only needed when you record" autocapitalize="off" autocorrect="off" />
   <div class="row">
     <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
-    <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="250" /></div>
+    <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="500" /></div>
   </div>
 
   <div class="btns">
@@ -139,7 +139,7 @@
     if (busy) return; busy = true; $("run").disabled = true; $("record").disabled = true;
     $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
     repo = $("repo").value.trim() || "ghug/cribbage-zero";
-    var decks = Math.max(1, parseInt($("decks").value, 10) || 250), games = decks * 2;
+    var decks = Math.max(1, parseInt($("decks").value, 10) || 500), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
       status("pulling net …"); await sleep(0);
@@ -150,9 +150,9 @@
       $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
       var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
       $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
-      last = { games: trained, vsRand: vsRand, vsHard: vsHard };
-      $("record").disabled = false;       // results are in — recording is now available, on your approval
-      log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)");
+      last = { games: trained, vsRand: vsRand, vsHard: vsHard, testGames: games };
+      if (games >= 1000) { $("record").disabled = false; log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)"); }
+      else { $("record").disabled = true; log("eval done — " + games + " balanced games is below the 1000 minimum to record (raise Decks to ≥ 500)"); }
       status("done — not recorded");
     } catch (e) { log("error: " + e.message); status("error"); }
     busy = false; $("run").disabled = false;
@@ -161,6 +161,7 @@
   // manual approval step: push the last eval's two points to the progress branch
   async function recordLast() {
     if (busy || !last) return;
+    if (last.testGames < 1000) { status("need ≥ 1000 balanced games to record"); log("recording blocked: " + last.testGames + " balanced games is below the 1000 minimum"); return; }
     token = $("token").value.trim();
     if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
     if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%")) { log("recording cancelled"); return; }
