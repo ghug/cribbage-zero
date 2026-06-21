@@ -1,16 +1,18 @@
 name: Cribbage Zero trainer
 
-# The single trainer: every 30 min (and on demand) it pulls the self-play shards workers pushed to the
-# data-bus, SGD-trains the net, publishes the updated checkpoint, and prunes the consumed shards.
-# On an empty data-bus it seeds from engine/az_seed.json (continuing prior training, iter 1445).
+# The single trainer for the Cloudflare data-bus path: when run, it pulls the self-play shards workers
+# pushed to the data-bus, SGD-trains the net, publishes the updated checkpoint, and prunes the consumed
+# shards. On an empty data-bus it seeds from engine/az_seed.json (continuing prior training, iter 1445).
+#
+# MANUAL ONLY: the 30-min cron is disabled — the active training now runs on the GitHub `net` branch
+# (local.html / engine/az_contribute.js), a separate net from this data-bus one. Re-enable the schedule
+# only if you reactivate the Cloudflare fan-out. Trigger on demand via the Actions tab (Run workflow).
 #
 # Requires two repo secrets:
 #   AZ_API_URL        the Worker API base, e.g. https://cribbage-zero-bus.<you>.workers.dev
 #   AZ_TRAINER_TOKEN  the trainer token (full access; NOT the worker token handed to devices)
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 concurrency:                 # never run two trainers at once (single checkpoint writer)
