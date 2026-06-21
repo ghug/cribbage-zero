@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Progress</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --rand:#d6bc7a; --hard:#6fbf8e; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 14px; }
+  a { color:var(--gold); }
+  .card { background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:14px; padding:12px; margin:10px 0; }
+  canvas { width:100%; height:320px; display:block; }
+  .legend { display:flex; gap:16px; justify-content:center; margin:8px 0 0; font-size:13px; flex-wrap:wrap; }
+  .legend .it { display:flex; align-items:center; gap:6px; color:var(--mut); }
+  .legend .sw { width:14px; height:3px; border-radius:2px; }
+  .legend b { color:var(--ink); }
+  .bar { display:flex; gap:10px; align-items:flex-end; margin:6px 0 0; }
+  .bar > div { flex:1; } label { display:block; font-size:12px; color:var(--mut); margin:0 0 4px; }
+  input { width:100%; padding:10px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  button { padding:11px 14px; border-radius:10px; border:0; background:rgba(255,255,255,.12); color:var(--ink); font:600 14px inherit; cursor:pointer; }
+  #status { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:8px 0 0; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Cribbage Zero — Progress</h1>
+  <p class="sub">Net win% over games trained, from the
+  <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch
+  (1000-balanced-game evals recorded via the <a href="eval.html">eval tool</a>). <a href="dev.html">← tools</a></p>
+
+  <div class="card">
+    <canvas id="chart"></canvas>
+    <div class="legend">
+      <span class="it"><span class="sw" style="background:var(--rand)"></span>vs random <b id="lRand">—</b></span>
+      <span class="it"><span class="sw" style="background:var(--hard)"></span>vs hard <b id="lHard">—</b></span>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
+    <div style="flex:0 0 auto"><label>&nbsp;</label><button id="refresh">↻ Refresh</button></div>
+  </div>
+  <details class="note"><summary>Token (optional — only to dodge the anonymous rate limit)</summary>
+    <input id="token" type="password" placeholder="ghp_…" autocapitalize="off" autocorrect="off" style="margin-top:6px" /></details>
+  <div id="status"></div>
+  <p class="note">Read-only and token-less by default (the progress branch is public). The two series use very
+  different scales — vs-hard starts near zero and climbs as the net learns. Public domain (The Unlicense).</p>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var series = [{ name: "vs random", color: "#d6bc7a", pts: [] }, { name: "vs hard", color: "#6fbf8e", pts: [] }];
+  function repo() { return $("repo").value.trim() || "ghug/cribbage-zero"; }
+  function status(m) { $("status").textContent = m || ""; }
+  function fmtGames(x) { return x >= 1000 ? +(x / 1000).toFixed(x >= 10000 ? 0 : 1) + "k" : "" + Math.round(x); }
+
+  function parseCsv(text) {
+    return text.split("\n").map(function (l) { return l.trim(); })
+      .filter(function (l) { return l && l[0] !== "#" && !/^games\s*,/i.test(l); })
+      .map(function (l) { var a = l.split(","); return { x: +a[0], y: +a[1] }; })
+      .filter(function (p) { return isFinite(p.x) && isFinite(p.y); })
+      .sort(function (a, b) { return a.x - b.x; });
+  }
+  async function getCsv(file) {
+    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    var tk = $("token").value.trim(); if (tk) H.Authorization = "Bearer " + tk;
+    var res = await fetch("https://api.github.com/repos/" + repo() + "/contents/" + file + "?ref=progress", { headers: H });
+    if (res.status === 404) return [];
+    if (res.status === 403) throw new Error("rate-limited — add a token");
+    if (!res.ok) throw new Error(file + " -> " + res.status);
+    return parseCsv(await res.text());
+  }
+
+  function draw() {
+    var cv = $("chart"), dpr = window.devicePixelRatio || 1;
+    var W = cv.clientWidth || 600, H = 320;
+    cv.width = W * dpr; cv.height = H * dpr; var ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var padL = 42, padR = 12, padT = 12, padB = 26, plotW = W - padL - padR, plotH = H - padT - padB;
+    var xmin = Infinity, xmax = -Infinity;
+    series.forEach(function (s) { s.pts.forEach(function (p) { if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x; }); });
+    ctx.font = "11px ui-monospace,Menlo,monospace"; ctx.textBaseline = "alphabetic";
+    if (!isFinite(xmin)) { ctx.fillStyle = "#a9c4b3"; ctx.textAlign = "center"; ctx.fillText("no progress points yet", W / 2, H / 2); return; }
+    if (xmin === xmax) { xmin -= 1; xmax += 1; }
+    var X = function (x) { return padL + (x - xmin) / (xmax - xmin) * plotW; };
+    var Y = function (y) { return padT + (1 - y / 100) * plotH; };
+    ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.fillStyle = "#a9c4b3"; ctx.lineWidth = 1; ctx.textAlign = "left";
+    for (var v = 0; v <= 100; v += 25) { var yy = Y(v); ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke(); ctx.fillText(v + "%", 6, yy + 3); }
+    [xmin, (xmin + xmax) / 2, xmax].forEach(function (xv, i) { ctx.textAlign = i === 0 ? "left" : i === 2 ? "right" : "center"; ctx.fillText(fmtGames(xv), X(xv), H - 8); });
+    series.forEach(function (s) {
+      if (!s.pts.length) return;
+      ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
+      s.pts.forEach(function (p, i) { var xx = X(p.x), yy = Y(p.y); i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); });
+      ctx.stroke();
+      s.pts.forEach(function (p) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 2.5, 0, 7); ctx.fill(); });
+    });
+  }
+  function last(pts) { return pts.length ? pts[pts.length - 1].y + "%" : "—"; }
+
+  async function load() {
+    status("loading…");
+    try {
+      var r = await Promise.all([getCsv("progress-random.csv"), getCsv("progress-hard.csv")]);
+      series[0].pts = r[0]; series[1].pts = r[1];
+      $("lRand").textContent = last(r[0]); $("lHard").textContent = last(r[1]);
+      draw();
+      status((r[0].length + r[1].length) ? (r[0].length + " random · " + r[1].length + " hard points") : "no points yet");
+    } catch (e) { status("error: " + e.message); }
+  }
+
+  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
+  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
+  $("refresh").addEventListener("click", function () { localStorage.setItem("cz_repo", repo()); load(); });
+  window.addEventListener("resize", draw);
+  load();
+})();
+</script>
+</body>
+</html>
