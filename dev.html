@@ -51,17 +51,6 @@ CZ_TOKEN=&lt;pat&gt; node engine/eval_zero.js --yes      # approve non-interacti
     <p>Multi-core headless trainer — pulls the net, self-plays + trains, pushes it back. Far faster than a phone.</p>
     <pre>CZ_TOKEN=&lt;github-pat&gt; node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5]</pre></div>
 
-  <div class="tool"><b>Train locally (from random)</b>
-    <p>Single-machine self-play training loops (no network); checkpoints to engine/az_checkpoint.json.</p>
-    <pre>node engine/az_train.js [iters] [gamesPerIter] [sims]   # single process
-node engine/az_parallel.js [workers] [chunk] [games] [sims]   # all cores</pre></div>
-
-  <div class="tool"><b>Engine self-tests</b>
-    <p>Prove the math before trusting the loop.</p>
-    <pre>node engine/az_net.js     # net gradient check + toy learning
-node engine/az_game.js    # game env (2000 random games)
-node engine/az_mcts.js    # IS-MCTS mechanics</pre></div>
-
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
   (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
   Public domain (The Unlicense).</p>
