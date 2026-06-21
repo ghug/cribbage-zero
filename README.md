@@ -49,9 +49,12 @@ node engine/az_contribute.js --dry          # pull + self-play + train, but NEVE
 ```
 
 - `CZ_TOKEN` — a GitHub PAT with **Contents: read+write** on the repo. `CZ_REPO` overrides the target
-  (default `ghug/cribbage-zero`). `--fresh` ignores the remote and starts tabula rasa.
+  (default `ghug/cribbage-zero`).
 - It resumes from whatever the phone/another computer last pushed, and shares the **same** checkpoint
   format — so they're interchangeable.
+- **It won't throw out the cloud net.** It only starts fresh when the branch genuinely has *no* net (a
+  clean 404). If it can't read the net, or the net is a different architecture, it refuses to start —
+  resetting the net is a deliberate manual act, not something a contributor can trip into.
 - **Single-writer:** the net is one blob pushed with a force-push, so run **only one trainer at a time**
   (this *or* the phone, not both at once) — concurrent trainers overwrite each other's games. Ctrl-C does
   a final push before exiting.

@@ -18,9 +18,11 @@
  *   CZ_REPO   target repo (default "ghug/cribbage-zero")
  * Flags:
  *   --dry     train but never push (pull + self-play + train only — safe for a smoke test)
- *   --fresh   ignore the remote net and start from a fresh tabula-rasa net
  *
- * Ctrl-C does a final push, then exits.
+ * It NEVER overwrites the cloud net with a blank one: it only starts fresh when the branch genuinely has
+ * no net (a clean 404). If it can't read the net, or the net is a different architecture, it refuses to
+ * start (resetting the net is a deliberate act, not something a contributor can trip into). Ctrl-C does a
+ * final push, then exits.
  */
 "use strict";
 const { makeRng, selfPlay, train, evalVsRandom, freshNet, netToObj, netFromObj, INPUT_DIM } = require("./az_common.js");
@@ -31,7 +33,6 @@ const SIMS = parseInt(process.argv[3], 10) || 50;
 const PUSH_EVERY = parseInt(process.argv[4], 10) || 5;
 const GRAPH_EVERY = parseInt(process.argv[5], 10) || 10000;
 const DRY = process.argv.includes("--dry");
-const FRESH = process.argv.includes("--fresh");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
 const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.json";
@@ -83,12 +84,24 @@ async function pushNet(net, iter, games, graph) {
 
 (async () => {
   let net, iter = 0, games = 0, graph = [];
-  if (!FRESH && TOKEN) {
+  if (TOKEN) {
     log("pulling net from " + REPO + " @ " + BRANCH + " …");
-    let remote = null; try { remote = await pullNet(); } catch (e) { log("pull failed: " + e.message); }
-    if (remote && validCkpt(remote)) { net = netFromObj(remote); iter = remote.iter || 0; games = remote.games || 0; graph = Array.isArray(remote.graph) ? remote.graph : []; log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")"); }
-    else if (remote) { log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ") — starting fresh"); }
-    else log("no net on GitHub yet — starting fresh");
+    let remote, pullErr = null;
+    try { remote = await pullNet(); } catch (e) { pullErr = e; }   // pullNet returns null on a clean 404, throws otherwise
+    if (pullErr) {                                        // couldn't READ the cloud net — refuse, so we never overwrite it blind
+      log("pull failed: " + pullErr.message);
+      if (!DRY) { console.error("az_contribute: refusing to start — can't read the cloud net, and training would push a net that overwrites it. Fix the token/connection and retry."); process.exit(1); }
+      log("dry run — training a throwaway local net (won't push)");
+    } else if (remote && validCkpt(remote)) {
+      net = netFromObj(remote); iter = remote.iter || 0; games = remote.games || 0; graph = Array.isArray(remote.graph) ? remote.graph : [];
+      log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")");
+    } else if (remote) {                                 // a net exists but doesn't match this build — a reset must be deliberate, not automatic
+      log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ")");
+      if (!DRY) { console.error("az_contribute: refusing to start — the cloud net doesn't match this build. Reset the `net` branch deliberately before contributing."); process.exit(1); }
+      log("dry run — training a throwaway local net (won't push)");
+    } else {
+      log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
+    }
   }
   if (!net) { net = freshNet(HID); iter = 0; games = 0; graph = []; log("fresh net (hidden " + HID + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
