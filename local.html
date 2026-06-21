@@ -139,7 +139,9 @@
   function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
   function unb64(s) { return decodeURIComponent(escape(atob(s))); }
   async function gh(method, path, body) {
-    var res = await fetch("https://api.github.com" + path, { method: method, headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" }, body: body ? JSON.stringify(body) : undefined });
+    var headers = { Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token) headers.Authorization = "Bearer " + token;   // omit on a token-less public read; writes still need it
+    var res = await fetch("https://api.github.com" + path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined });
     var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
     if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
     return { status: res.status, body: j };
@@ -196,6 +198,7 @@
       if (!running) break;
       iter++; totalGames += gpi; lastLoss = nb ? loss / nb : 0; saveLocal(); render(); showStats();
       log("iter " + iter + " (" + totalGames.toLocaleString() + " games): " + data.length + " samples, loss " + lastLoss.toFixed(3));
+      token = $("token").value.trim(); if (token) localStorage.setItem("cz_token", token);   // live re-read: a token added mid-run starts pushing
       if (token && iter % pushEvery === 0) { progress("pushing to GitHub…"); try { await pushNet(); log("pushed net iter " + iter + " to GitHub"); } catch (e) { log("push failed: " + e.message); } }
     }
     progress("");
@@ -207,12 +210,19 @@
     token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero"); pushEvery = Math.max(1, parseInt($("push").value, 10) || 10);
     localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     if (token) localStorage.setItem("cz_token", token);
-    setRunning(true); startTime = Date.now(); gamesSession = 0;
+    // warn on a missing token — training will run read-only until one is added
+    if (!token && !confirm("No GitHub token set.\n\nTraining resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?")) return;
+    if (!token) log("⚠ no token — read-only: progress won't push until you add a token in Settings");
 
-    var localO = loadLocalObj(), remoteO = null;
-    if (token) { progress("checking GitHub…"); try { remoteO = await pullNet();
-      log(remoteO ? "GitHub net at iter " + (remoteO.iter || 0) : "no net on GitHub yet"); } catch (e) { log("pull failed: " + e.message); } }
+    // always pull the net first (authenticated if a token is set, else a public read) — only start once we have it
+    setRunning(true); startTime = Date.now(); gamesSession = 0; progress("pulling net…");
+    var remoteO = null;
+    try { remoteO = await pullNet(); }
+    catch (e) { log("pull failed: " + e.message + " — not starting (a net read is required to begin)"); setRunning(false); progress(""); return; }
     if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
+    log(remoteO ? "pulled GitHub net: " + (remoteO.games || 0).toLocaleString() + " games (iter " + (remoteO.iter || 0) + ")" : "no net on GitHub yet");
+
+    var localO = loadLocalObj();
     var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
     if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
     else { net = freshNet(HID); iter = 0; totalGames = 0; log("fresh net (hidden " + HID + ")"); }
@@ -225,6 +235,7 @@
     if (!running) return;
     running = false; winding = false; updateButtons(); progress("");
     log("stopped (saved at iter " + iter + ")");
+    token = $("token").value.trim(); if (token) localStorage.setItem("cz_token", token);   // live re-read so a late token still does the final push
     if (token) pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); });
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
