@@ -104,6 +104,18 @@
   </div>
 </div>
 
+<!-- in-page confirm modal (no native dialogs — works in the bare WebView) -->
+<div class="overlay" id="confirmOverlay" role="dialog" aria-modal="true" aria-label="Confirm">
+  <div class="modal">
+    <div class="modal-head"><h2 id="cmTitle">Confirm</h2></div>
+    <p id="cmBody" style="white-space:pre-line; color:var(--mut); font-size:13.5px"></p>
+    <div style="display:flex; gap:10px; margin-top:14px">
+      <button class="done" id="cmCancel" type="button" style="flex:1; background:rgba(255,255,255,.12)">Cancel</button>
+      <button class="done" id="cmOk" type="button" style="flex:1">OK</button>
+    </div>
+  </div>
+</div>
+
 <script src="worker/az_bundle.js"></script><!-- selfPlay, train, freshNet, netToObj/netFromObj, evalVsRandom, makeRng -->
 <script>
 (function () {
@@ -215,7 +227,7 @@
     localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_push", pushEvery); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     persistToken();
     // warn on a missing token — training will run read-only until one is added
-    if (!token && !confirm("No GitHub token set.\n\nTraining resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?")) return;
+    if (!token && !(await confirmModal("No GitHub token", "Training resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?", "Continue"))) return;
     if (!token) log("⚠ no token — read-only: progress won't push until you add a token in Settings");
 
     // always pull the net first (authenticated if a token is set, else a public read) — only start once we have it
@@ -244,10 +256,20 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  function reset() { if (running) { log("stop first"); return; } if (!confirm("Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.")) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
+  async function reset() { if (running) { log("stop first"); return; } if (!(await confirmModal("Reset local net?", "Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.", "Reset"))) return; localStorage.removeItem(KEY); net = freshNet(HID); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
+  // in-page confirm modal (no native window.confirm — that's a no-op in the bare WebView); resolves true/false
+  function confirmModal(title, body, okLabel) {
+    $("cmTitle").textContent = title; $("cmBody").textContent = body; $("cmOk").textContent = okLabel || "OK";
+    open($("confirmOverlay"));
+    return new Promise(function (resolve) {
+      function done(v) { close($("confirmOverlay")); $("cmOk").onclick = $("cmCancel").onclick = null; resolve(v); }
+      $("cmOk").onclick = function () { done(true); };
+      $("cmCancel").onclick = function () { done(false); };
+    });
+  }
   $("gear").addEventListener("click", function () { open($("settingsOverlay")); });
   $("settingsDone").addEventListener("click", function () { close($("settingsOverlay")); });
   $("aboutBtn").addEventListener("click", function () { open($("aboutOverlay")); });

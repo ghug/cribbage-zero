@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.ViewGroup;
-import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -36,8 +35,6 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(true);
         settings.setAllowFileAccessFromFileURLs(true);
         settings.setAllowUniversalAccessFromFileURLs(true);  // fetch the GitHub API from the file:// origin
-
-        web.setWebChromeClient(new WebChromeClient());        // enable JS dialogs (window.confirm/alert) — record & reset prompts
 
         web.setWebViewClient(new WebViewClient() {
             @Override
