@@ -13,11 +13,13 @@
  *
  * Usage:
  *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=100]
- *   Trains in memory and pushes the net ONLY on wind-down (Ctrl-C) — never periodically.
+ *   Pushes the net to GitHub ONLY on wind-down (Ctrl-C) — never periodically. It DOES write a local
+ *   checkpoint file every round (no network) for crash safety, and resumes from it if it's ahead of the cloud.
  * Env:
  *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
  *   CZ_REPO     target repo (default "ghug/cribbage-zero")
  *   CZ_WORKERS  self-play worker threads (default: CPU cores − 1)
+ *   CZ_CKPT     local checkpoint path (default: engine/az_contribute_ckpt.json)
  * Flags:
  *   --dry       train but never push (pull + self-play + train only — safe smoke test)
  *
@@ -28,8 +30,10 @@
  */
 "use strict";
 const os = require("os");
+const fs = require("fs");
+const path = require("path");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
-const { makeRng, selfPlay, train, freshNet, netToObj, netFromObj, INPUT_DIM } = require("./az_common.js");
+const { makeRng, selfPlay, train, freshNet, netToObj, netFromObj, writeAtomic, INPUT_DIM } = require("./az_common.js");
 
 /* ---------------- WORKER: self-play against a net snapshot, hand samples back ---------------- */
 if (!isMainThread) {
@@ -54,6 +58,7 @@ const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
 const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
+const LOCAL = process.env.CZ_CKPT || path.join(__dirname, "az_contribute_ckpt.json");   // crash-safety: saved every round, no network
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
 const now = () => new Date().toLocaleTimeString();
 const log = (m) => console.log(`[${now()}] ${m}`);
@@ -123,6 +128,14 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
       log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
     }
   }
+  // crash-safety: a LOCAL checkpoint ahead of the cloud (trained but not yet wind-down-pushed) wins
+  let local = null;
+  try { local = JSON.parse(fs.readFileSync(LOCAL, "utf8")); } catch (e) {}
+  if (local && validCkpt(local) && (local.games || 0) > games) {
+    net = netFromObj(local); iter = local.iter || 0; games = local.games || 0;
+    log("resuming from LOCAL checkpoint (ahead of cloud): " + games.toLocaleString() + " games (iter " + iter + ") @ " + LOCAL);
+  } else if (local && !validCkpt(local)) { log("local checkpoint is a different architecture — ignoring it"); }
+
   if (!net) { net = freshNet(HIDDEN); iter = 0; games = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
   // spawn the self-play worker pool (one per core by default), kept alive across rounds.
@@ -155,7 +168,8 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
     iter++; games += perRound;
     const gps = (perRound / ((Date.now() - it0) / 1000)).toFixed(1);
     log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s");
-    // no periodic push — the net is pushed once on wind-down (below). A crash before then loses this run's work.
+    try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
+    // no periodic GitHub push — the net is pushed once on wind-down (below); restart resumes from LOCAL.
   }
   await Promise.all(workers.map((wk) => wk.terminate()));
   if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("wind-down push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("wind-down push failed: " + e.message); } }

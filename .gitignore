@@ -1,5 +1,6 @@
 node_modules/
 engine/az_checkpoint.json
+engine/az_contribute_ckpt.json
 engine/az_data/
 worker/az_bundle.js
 *.tmp
