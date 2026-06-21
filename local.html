@@ -113,7 +113,7 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.1.16";   // repo release version (bumped every release); android versionName only catches up on an APK release
+  var VERSION = "0.1.17";   // repo release version (bumped every release); android versionName only catches up on an APK release
   var KEY = "cz_local_ckpt", HID = 64, EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
   var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", PROGPATH = "checkpoints/progress.csv";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
