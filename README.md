@@ -37,4 +37,23 @@ node engine/az_game.js                      # self-tests (game env: 2000 random 
 node engine/az_mcts.js                      # self-tests (IS-MCTS mechanics)
 ```
 
+## Contribute self-play from a computer
+
+`local.html` (the on-device trainer) pulls the shared net from the GitHub `net` branch, self-plays +
+trains, and pushes it back. `engine/az_contribute.js` is the **headless Node version of the same loop**,
+so a computer can carry the training far faster than a phone:
+
+```
+CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5] [graphEvery=10000]
+node engine/az_contribute.js --dry          # pull + self-play + train, but NEVER push (safe smoke test)
+```
+
+- `CZ_TOKEN` — a GitHub PAT with **Contents: read+write** on the repo. `CZ_REPO` overrides the target
+  (default `ghug/cribbage-zero`). `--fresh` ignores the remote and starts tabula rasa.
+- It resumes from whatever the phone/another computer last pushed, and shares the **same** checkpoint
+  format — so they're interchangeable.
+- **Single-writer:** the net is one blob pushed with a force-push, so run **only one trainer at a time**
+  (this *or* the phone, not both at once) — concurrent trainers overwrite each other's games. Ctrl-C does
+  a final push before exiting.
+
 License: public domain (The Unlicense), matching the companion project.
