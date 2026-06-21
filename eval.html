@@ -40,6 +40,7 @@
   <div class="row">
     <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="5000" /></div>
+    <div><label for="sims">MCTS sims (0 = greedy)</label><input id="sims" type="number" min="0" value="0" /></div>
   </div>
 
   <div class="btns">
@@ -52,17 +53,19 @@
   </div>
   <div id="status"></div>
   <div id="log"></div>
-  <p class="note">The Zero side plays natively (the net's greedy policy). The hard bot is a vendored snapshot of the
+  <p class="note">The Zero side plays the net's policy — greedy by default, or MCTS when sims &gt; 0 (stronger but slower).
+  The recorded progress curve is the greedy (sims=0) baseline; record MCTS results only if you track them separately.
+  The hard bot is a vendored snapshot of the
   cribbage-trainer heuristic (win-prob discard + depth-1 pegging) — a fixed benchmark. Public domain (The Unlicense).</p>
 </div>
 
-<script src="worker/az_bundle.js"></script><!-- Net, CribGame, evalVsRandom, argmaxLegal, randomLegal, netFromObj, makeRng, handDetail, pegChooseDeep, pval -->
+<script src="worker/az_bundle.js"></script><!-- Net, CribGame, evalVsRandom, search, argmaxLegal, randomLegal, netFromObj, makeRng, handDetail, pegChooseDeep, pval -->
 <script src="src/winprob.js"></script><!-- winProbHand -->
 <script>
 (function () {   // IIFE so our locals (TARGET, COMBOS6, …) don't collide with the bundle's globals
   var $ = function (id) { return document.getElementById(id); };
   var TARGET = 121, NPOL = 15, BRANCH = "net", PROG = "progress", CKPATH = "checkpoints/az_checkpoint.json";
-  var token = "", repo = "ghug/cribbage-zero", busy = false;
+  var token = "", repo = "ghug/cribbage-zero", busy = false, sims = 0, CPUCT = 1.5;
   var rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; }
@@ -101,17 +104,20 @@
     return slot;
   }
 
-  // net (greedy) vs an opponent slot-fn; seats swapped each game; yields to keep the UI alive
+  // net side plays greedy (sims=0) or via MCTS (sims>0) vs an opponent slot-fn; seats swapped each game; yields to keep the UI alive
+  function netMove(net, g, p, legal) {
+    return sims > 0 ? search(g, net, sims, CPUCT, rng).move : argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal);
+  }
   async function runMatch(net, oppFn, games, label) {
     var wins = 0;
     for (var gi = 0; gi < games; gi++) {
       var g = new CribGame(rng), netSeat = gi & 1, guard = 0;
       while (!g.done && guard++ < 4000) {
         var p = g.toAct, legal = g.decision.slots;
-        g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : oppFn(g, p));
+        g.step(p === netSeat ? netMove(net, g, p, legal) : oppFn(g, p));
       }
       if (g.winner === netSeat) wins++;
-      if (gi % 25 === 0) { status(label + " " + gi + "/" + games + " …"); await sleep(0); }
+      if (gi % 25 === 0) { status(label + " " + gi + "/" + games + (sims > 0 ? " · " + sims + " sims" : "") + " …"); await sleep(0); }
     }
     return +(100 * wins / games).toFixed(1);
   }
@@ -141,6 +147,7 @@
     $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
     repo = $("repo").value.trim() || "ghug/cribbage-zero";
     token = $("token").value.trim();   // reads use the token when present (higher rate limit), token-less otherwise
+    sims = Math.max(0, parseInt($("sims").value, 10) || 0);   // 0 = greedy policy; >0 = MCTS per move (the canonical progress metric is sims=0)
     var decks = Math.max(1, parseInt($("decks").value, 10) || 5000), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
@@ -152,7 +159,7 @@
       $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
       var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
       $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
-      last = { games: trained, vsRand: vsRand, vsHard: vsHard, testGames: games };
+      last = { games: trained, vsRand: vsRand, vsHard: vsHard, testGames: games, sims: sims };
       if (games >= 10000) { $("record").disabled = false; log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)"); }
       else { $("record").disabled = true; log("eval done — " + games + " balanced games is below the 10000 minimum to record (raise Decks to ≥ 5000)"); }
       status("done — not recorded");
@@ -166,7 +173,7 @@
     if (last.testGames < 10000) { status("need ≥ 10000 balanced games to record"); log("recording blocked: " + last.testGames + " balanced games is below the 10000 minimum"); return; }
     token = $("token").value.trim();
     if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
-    if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%")) { log("recording cancelled"); return; }
+    if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%" + (last.sims ? "\n  MCTS sims: " + last.sims + "  ⚠ differs from the greedy (sims=0) baseline the curve uses" : ""))) { log("recording cancelled"); return; }
     busy = true; $("run").disabled = true; $("record").disabled = true;
     repo = $("repo").value.trim() || "ghug/cribbage-zero";
     try {
