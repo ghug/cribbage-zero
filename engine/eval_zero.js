@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* engine/eval_zero.js — DEV TOOL: measure the trained net and record it on the `progress` branch.
  *
- * Pulls the latest net from the `net` branch, plays a 1000-game seat-balanced match vs RANDOM and another
+ * Pulls the latest net from the `net` branch, plays a 10000-game seat-balanced match vs RANDOM and another
  * vs a HARD bot, and appends a "games,winPct" point to progress-random.csv and progress-hard.csv on the
  * `progress` branch. The self-play loop no longer benchmarks strength (it just trains), so this is how the
  * strength-over-games curves stay current — run it occasionally.
@@ -15,15 +15,15 @@
  * progress branch (answer y/N). Nothing is recorded automatically. `--dry` skips recording entirely (no
  * prompt); `--yes` approves it non-interactively (for scripts / a non-TTY).
  *
- * Run:  CZ_TOKEN=<github-pat> node engine/eval_zero.js [decks=500] [--dry|--yes]   (decks×2 = games per match;
- *        recording requires ≥1000 balanced games, i.e. decks ≥ 500)
+ * Run:  CZ_TOKEN=<github-pat> node engine/eval_zero.js [decks=5000] [--dry|--yes]   (decks×2 = games per match;
+ *        recording requires ≥10000 balanced games, i.e. decks ≥ 5000)
  */
 "use strict";
 const fs = require("fs"), path = require("path"), readline = require("readline");
 const { Net, CribGame, makeRng, argmaxLegal, randomLegal, netFromObj, evalVsRandom } = require("./az_common.js");
 
 const REPO = "ghug/cribbage-zero", TARGET = 121, NPOL = 15;
-const DECKS = parseInt(process.argv[2], 10) || 500;
+const DECKS = parseInt(process.argv[2], 10) || 5000;
 const DRY = process.argv.includes("--dry");
 const YES = process.argv.includes("--yes") || process.argv.includes("-y");
 const TOKEN = process.env.CZ_TOKEN || "";
@@ -122,7 +122,7 @@ function confirmRecord(games, vsRand, vsHard) {
   console.log("  vs HARD:   " + vsHard + "%");
 
   if (DRY) { console.log("eval_zero: [dry] not recorded"); return; }
-  if (DECKS * 2 < 1000) { console.log("eval_zero: " + (DECKS * 2) + " balanced games < 1000 minimum — not recording (use decks ≥ 500)"); return; }
+  if (DECKS * 2 < 10000) { console.log("eval_zero: " + (DECKS * 2) + " balanced games < 10000 minimum — not recording (use decks ≥ 5000)"); return; }
   if (!(await confirmRecord(games, vsRand, vsHard))) { console.log("eval_zero: not recorded"); return; }
   if (!TOKEN) { console.log("eval_zero: no CZ_TOKEN set — cannot record"); return; }
   await appendPoint("progress-random.csv", games, vsRand);
