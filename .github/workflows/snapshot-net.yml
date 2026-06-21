@@ -2,10 +2,13 @@ name: Snapshot the net
 
 # Archives the current net (the `net` branch checkpoint) to the `net-archive` branch as a milestone
 # restore point. The live net branch keeps no history (one orphan commit), so these snapshots are the
-# rollback safety net. Runs weekly, on demand (workflow_dispatch), and can be dispatched by the trainer
-# release. Uses the repo's own GITHUB_TOKEN — no extra secrets.
+# rollback safety net. Runs on every cribbage-zero release (version tag), weekly, and on demand
+# (workflow_dispatch). Uses the repo's own GITHUB_TOKEN — no extra secrets.
 
 on:
+  push:
+    tags:
+      - "v*"            # snapshot the net on each cribbage-zero release
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 0"   # weekly, Sunday 06:00 UTC
