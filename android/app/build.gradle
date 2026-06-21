@@ -10,8 +10,8 @@ android {
         applicationId "dev.cribbage.zero"      // separate app; installs alongside the game
         minSdk 26
         targetSdk 34
-        versionCode 19                         // bump by 1 on every release
-        versionName "0.1.19"
+        versionCode 20                         // bump by 1 on every release
+        versionName "0.1.20"
     }
 
     buildTypes {
