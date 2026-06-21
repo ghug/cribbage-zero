@@ -17,8 +17,8 @@
   .row { display:flex; gap:10px; } .row > div { flex:1; }
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
   button.act { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
-  #run { background:var(--good); color:#10331f; } #dry { background:var(--gold); color:#241f0e; }
-  button:disabled { opacity:.4; }
+  #run { background:var(--good); color:#10331f; } #record { background:var(--gold); color:#241f0e; }
+  button:disabled { opacity:.4; cursor:default; }
   .results { display:flex; gap:10px; margin:14px 0 8px; }
   .res { flex:1; text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:16px 8px; }
   .res b { display:block; font-size:30px; color:var(--gold); line-height:1; } .res span { color:var(--mut); font-size:12px; }
@@ -30,19 +30,20 @@
 <body>
 <div class="wrap">
   <h1>♣ Cribbage Zero — Evaluate</h1>
-  <p class="sub">Pulls the latest net, plays balanced games vs random and vs the hard bot, and records a point on the
-  <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch. <a href="dev.html">← dev tools</a></p>
+  <p class="sub">Pulls the latest net, plays balanced games vs random and vs the hard bot. Recording the result on the
+  <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch is a
+  separate, manual step you approve <i>after</i> the eval finishes. <a href="dev.html">← dev tools</a></p>
 
   <label for="token">GitHub token (Contents: write — only needed to record)</label>
-  <input id="token" type="password" placeholder="ghp_… — leave blank for a dry run" autocapitalize="off" autocorrect="off" />
+  <input id="token" type="password" placeholder="ghp_… — only needed when you record" autocapitalize="off" autocorrect="off" />
   <div class="row">
     <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="250" /></div>
   </div>
 
   <div class="btns">
-    <button id="run" class="act">Run &amp; record</button>
-    <button id="dry" class="act">Dry run</button>
+    <button id="run" class="act">Run evaluation</button>
+    <button id="record" class="act" disabled>Record to progress</button>
   </div>
   <div class="results">
     <div class="res"><b id="rRand">—</b><span>% vs random</span></div>
@@ -131,14 +132,16 @@
     await gh("PUT", "/repos/" + repo + "/contents/" + file, { message: "eval @ " + games + " games: " + file + " " + pct + "%", content: b64(content), sha: cur.sha, branch: PROG });
   }
 
-  async function go(record) {
-    if (busy) return; busy = true; $("run").disabled = true; $("dry").disabled = true;
-    $("rRand").textContent = "—"; $("rHard").textContent = "—";
-    token = $("token").value.trim(); repo = $("repo").value.trim() || "ghug/cribbage-zero";
+  var last = null;   // { games, vsRand, vsHard } from the most recent eval — what "Record" will push
+
+  // run the evaluation ONLY — never records; recording is a separate manual approval below
+  async function runEval() {
+    if (busy) return; busy = true; $("run").disabled = true; $("record").disabled = true;
+    $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
+    repo = $("repo").value.trim() || "ghug/cribbage-zero";
     var decks = Math.max(1, parseInt($("decks").value, 10) || 250), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
-      if (record && !token) { log("a token is required to record — doing a dry run instead"); record = false; }
       status("pulling net …"); await sleep(0);
       var ck = JSON.parse(unb64((await gh("GET", "/repos/" + repo + "/contents/" + CKPATH + "?ref=" + BRANCH)).content));
       var net = netFromObj(ck), trained = ck.games || 0;
@@ -147,22 +150,38 @@
       $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
       var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
       $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
-      if (record) {
-        status("recording …"); await sleep(0);
-        await appendPoint("progress-random.csv", trained, vsRand);
-        await appendPoint("progress-hard.csv", trained, vsHard);
-        log("recorded both points on the progress branch ✓");
-      } else log("dry run — not recorded");
-      status("done");
+      last = { games: trained, vsRand: vsRand, vsHard: vsHard };
+      $("record").disabled = false;       // results are in — recording is now available, on your approval
+      log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)");
+      status("done — not recorded");
     } catch (e) { log("error: " + e.message); status("error"); }
-    busy = false; $("run").disabled = false; $("dry").disabled = false;
+    busy = false; $("run").disabled = false;
+  }
+
+  // manual approval step: push the last eval's two points to the progress branch
+  async function recordLast() {
+    if (busy || !last) return;
+    token = $("token").value.trim();
+    if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
+    if (!confirm("Record this point to the progress branch?\n\n  net @ " + last.games.toLocaleString() + " games\n  vs random: " + last.vsRand + "%\n  vs hard:   " + last.vsHard + "%")) { log("recording cancelled"); return; }
+    busy = true; $("run").disabled = true; $("record").disabled = true;
+    repo = $("repo").value.trim() || "ghug/cribbage-zero";
+    try {
+      status("recording …"); await sleep(0);
+      await appendPoint("progress-random.csv", last.games, last.vsRand);
+      await appendPoint("progress-hard.csv", last.games, last.vsHard);
+      log("recorded both points on the progress branch ✓");
+      status("recorded ✓");
+      last = null;                         // consume it so the same eval can't be double-recorded
+    } catch (e) { log("error: " + e.message); status("error"); $("record").disabled = false; }
+    busy = false; $("run").disabled = false;
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
   if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
   if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
-  $("run").addEventListener("click", function () { if ($("token").value.trim()) localStorage.setItem("cz_token", $("token").value.trim()); localStorage.setItem("cz_repo", $("repo").value.trim() || "ghug/cribbage-zero"); go(true); });
-  $("dry").addEventListener("click", function () { go(false); });
+  $("run").addEventListener("click", function () { localStorage.setItem("cz_repo", $("repo").value.trim() || "ghug/cribbage-zero"); runEval(); });
+  $("record").addEventListener("click", function () { if ($("token").value.trim()) localStorage.setItem("cz_token", $("token").value.trim()); recordLast(); });
 })();
 </script>
 </body>

@@ -11,17 +11,21 @@
  * winProbHand + handDetail) and depth-1 pegging (src/engine.js pegChooseDeep). It's a fixed benchmark and
  * may drift from the shipped hard bot over time — fine for a yardstick.
  *
- * Run:  CZ_TOKEN=<github-pat> node engine/eval_zero.js [decks=250] [--dry]   (decks×2 = games per match)
+ * Recording is a MANUAL step: after the eval prints, it asks for confirmation before appending to the
+ * progress branch (answer y/N). Nothing is recorded automatically. `--dry` skips recording entirely (no
+ * prompt); `--yes` approves it non-interactively (for scripts / a non-TTY).
+ *
+ * Run:  CZ_TOKEN=<github-pat> node engine/eval_zero.js [decks=250] [--dry|--yes]   (decks×2 = games per match)
  */
 "use strict";
-const fs = require("fs"), path = require("path");
+const fs = require("fs"), path = require("path"), readline = require("readline");
 const { Net, CribGame, makeRng, argmaxLegal, randomLegal, netFromObj, evalVsRandom } = require("./az_common.js");
 
 const REPO = "ghug/cribbage-zero", TARGET = 121, NPOL = 15;
 const DECKS = parseInt(process.argv[2], 10) || 250;
 const DRY = process.argv.includes("--dry");
+const YES = process.argv.includes("--yes") || process.argv.includes("-y");
 const TOKEN = process.env.CZ_TOKEN || "";
-if (!TOKEN && !DRY) { console.error("eval_zero: set CZ_TOKEN (a GitHub PAT) or pass --dry"); process.exit(1); }
 
 // vendored hard-bot pieces: handDetail + pegChooseDeep + pval (cribbage-zero's own src/engine.js) and
 // winProbHand (the vendored src/winprob.js) — captured the same way az_game.js loads the scoring.
@@ -96,6 +100,15 @@ async function appendPoint(file, games, pct) {                       // GET file
   await gh("PUT", "/repos/" + REPO + "/contents/" + file, { message: "eval @ " + games + " games: " + file + " " + pct + "%", content: b64(content), sha: cur.sha, branch: "progress" });
 }
 
+// manual approval gate: only record after the user confirms (or --yes). Non-TTY without --yes = decline.
+function confirmRecord(games, vsRand, vsHard) {
+  if (YES) return Promise.resolve(true);
+  if (!process.stdin.isTTY) { console.log("eval_zero: not a TTY — re-run with --yes to record"); return Promise.resolve(false); }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const q = "eval_zero: record (" + games + "," + vsRand + ") + (" + games + "," + vsHard + ") to the progress branch? [y/N] ";
+  return new Promise((res) => rl.question(q, (a) => { rl.close(); res(/^y(es)?$/i.test(a.trim())); }));
+}
+
 (async () => {
   console.log("eval_zero: pulling latest net from " + REPO + " @ net …");
   const ck = JSON.parse(unb64((await gh("GET", "/repos/" + REPO + "/contents/checkpoints/az_checkpoint.json?ref=net")).content));
@@ -107,7 +120,9 @@ async function appendPoint(file, games, pct) {                       // GET file
   const vsHard = +(100 * evalVsHard(net, DECKS * 2, makeRng(seed))).toFixed(1);
   console.log("  vs HARD:   " + vsHard + "%");
 
-  if (DRY) { console.log("eval_zero: [dry] not pushing"); return; }
+  if (DRY) { console.log("eval_zero: [dry] not recorded"); return; }
+  if (!(await confirmRecord(games, vsRand, vsHard))) { console.log("eval_zero: not recorded"); return; }
+  if (!TOKEN) { console.log("eval_zero: no CZ_TOKEN set — cannot record"); return; }
   await appendPoint("progress-random.csv", games, vsRand);
   await appendPoint("progress-hard.csv", games, vsHard);
   console.log("eval_zero: appended (" + games + "," + vsRand + ") and (" + games + "," + vsHard + ") to the progress branch");
