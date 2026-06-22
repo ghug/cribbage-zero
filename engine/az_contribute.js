@@ -12,15 +12,19 @@
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
-  CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=10000] [sims=40]
- *   Pushes the net to GitHub after each FULL iter (default 10000 games) and once on wind-down (Ctrl-C).
- *   Also writes a local checkpoint every round (no network) for crash safety, and on resume checks the small
- *   info file FIRST (cloud games count) so it only downloads the multi-MB net when the cloud is actually newer.
+ *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerRound=500] [sims=40]
+ *   Trains from a bounded REPLAY BUFFER (constant memory): each round self-plays gamesPerRound against a fresh
+ *   net snapshot, adds them to a sliding window, and does shuffled mini-batch SGD from the window. Pushes the
+ *   net every CZ_PUSH_GAMES games (default 10000) + once on wind-down (Ctrl-C). A local checkpoint is written
+ *   every round (crash safety); resume reads the small info file FIRST and only pulls the multi-MB net if newer.
  * Env:
- *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
- *   CZ_REPO     target repo (default "ghug/cribbage-zero")
- *   CZ_WORKERS  self-play worker threads (default: CPU cores − 1)
- *   CZ_CKPT     local checkpoint path (default: engine/az_contribute_ckpt.json)
+ *   CZ_TOKEN       GitHub PAT with Contents:read+write on the repo (required, unless --dry)
+ *   CZ_REPO        target repo (default "ghug/cribbage-zero")
+ *   CZ_WORKERS     self-play worker threads (default: CPU cores − 1)
+ *   CZ_CKPT        local checkpoint path (default: engine/az_contribute_ckpt.json)
+ *   CZ_PUSH_GAMES  games between GitHub pushes (default 10000)
+ *   CZ_BUF         replay buffer max samples (default 200000)
+ *   CZ_BATCH       SGD mini-batch size (default 256)
  * Flags:
  *   --dry       train but never push (pull + self-play + train only — safe smoke test)
  *
@@ -34,7 +38,7 @@ const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
-const { makeRng, selfPlay, train, freshNet, netToObj, netFromObj, writeAtomic, INPUT_DIM } = require("./az_common.js");
+const { makeRng, selfPlay, freshNet, netToObj, netFromObj, writeAtomic, INPUT_DIM } = require("./az_common.js");
 
 /* ---------------- WORKER: self-play against a net snapshot, hand samples back ---------------- */
 if (!isMainThread) {
@@ -55,9 +59,13 @@ if (!isMainThread) {
 }
 
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
-const HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
-const GAMES = parseInt(process.argv[2], 10) || 10000;
+const HIDDEN = [256, 256, 256, 256], LR = 0.02, CPUCT = 1.5;
+const CHUNK = parseInt(process.argv[2], 10) || 500;        // games per round (per net snapshot) — small so the net refreshes often
 const SIMS = parseInt(process.argv[3], 10) || 40;
+const PUSH_EVERY = parseInt(process.env.CZ_PUSH_GAMES, 10) || 10000;   // games between GitHub pushes (decoupled from rounds)
+const BUF_CAP = parseInt(process.env.CZ_BUF, 10) || 200000;           // replay buffer: max samples kept (sliding window, ~480 MB)
+const BATCH = parseInt(process.env.CZ_BATCH, 10) || 256;              // SGD mini-batch size
+const TRAIN_PER_SAMPLE = 2;                                           // gradient updates applied per NEW sample (≈ the old 2 epochs)
 const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
@@ -122,6 +130,14 @@ async function pushNet(net, iter, games) {   // pushes the net file + the small 
   else await gh("POST", "/repos/" + REPO + "/git/refs", { ref: "refs/heads/" + BRANCH, sha: commit.body.sha });
 }
 
+// SGD from the replay buffer: `steps` mini-batches of `batch` samples drawn at random WITH replacement —
+// the random draw decorrelates the otherwise-correlated within-game positions (lower-variance gradients).
+function trainReplay(net, buf, steps, batch, lr, rng) {
+  let loss = 0, n = 0;
+  for (let s = 0; s < steps; s++) for (let b = 0; b < batch; b++) { const d = buf[(rng() * buf.length) | 0]; loss += net.trainStep(d.x, d.z, d.pi, d.legal, lr); n++; }
+  return n ? loss / n : 0;
+}
+
 (async () => {
   let net, iter = 0, games = 0;
 
@@ -172,10 +188,10 @@ async function pushNet(net, iter, games) {   // pushes the net file + the small 
   if (!net) { net = freshNet(HIDDEN); iter = 0; games = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
   // spawn the self-play worker pool (one per core by default), kept alive across rounds.
-  // split GAMES across workers so every ROUND is exactly GAMES — no rounding drift (e.g. 500, not 495).
-  const base = Math.floor(GAMES / WORKERS), rem = GAMES % WORKERS;
+  // split CHUNK across workers so every ROUND is exactly CHUNK games — no rounding drift.
+  const base = Math.floor(CHUNK / WORKERS), rem = CHUNK % WORKERS;
   const perWorkerCounts = Array.from({ length: WORKERS }, (_, w) => base + (w < rem ? 1 : 0));
-  const perRound = GAMES;
+  const perRound = CHUNK;
   const stopFlag = new Int32Array(new SharedArrayBuffer(4));   // shared with workers; set on wind-down to stop after the in-progress game
   const workers = [];
   for (let w = 0; w < WORKERS; w++) {
@@ -188,23 +204,28 @@ async function pushNet(net, iter, games) {   // pushes the net file + the small 
     wk.postMessage({ net: netObj, games: perWorkerCounts[w] });
   })));
 
-  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims · pushes only on wind-down (Ctrl-C)");
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims · replay buffer " + BUF_CAP.toLocaleString() + " · push every " + PUSH_EVERY.toLocaleString() + " games (+ wind-down)");
   let stop = false;
   process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; Atomics.store(stopFlag, 0, 1); log("winding down — finishing the in-progress game, then pushing…"); });
 
+  const buf = [];          // replay buffer: bounded sliding window of recent samples (constant memory, not the whole run)
+  let pushAccum = 0;       // games since the last GitHub push
   const t0 = Date.now();
   while (!stop) {
     const it0 = Date.now();
-    const batches = await playRound(netToObj(net, iter));   // workers self-play against this snapshot, in parallel
-    let data = [], played = 0; for (const b of batches) { data = data.concat(b.samples); played += b.played; }   // played < round on wind-down
+    const batches = await playRound(netToObj(net, iter));   // workers self-play CHUNK games against this snapshot
+    let newData = [], played = 0; for (const b of batches) { newData = newData.concat(b.samples); played += b.played; }   // played < CHUNK on wind-down
     if (played > 0) {
-      const loss = train(net, data, EPOCHS, LR, rng);
-      iter++; games += played;
+      for (const d of newData) buf.push(d);                 // add to the replay buffer, evict the oldest beyond the cap
+      if (buf.length > BUF_CAP) buf.splice(0, buf.length - BUF_CAP);
+      const steps = Math.max(1, Math.round(TRAIN_PER_SAMPLE * newData.length / BATCH));
+      const loss = trainReplay(net, buf, steps, BATCH, LR, rng);   // shuffled mini-batches sampled from the whole buffer
+      iter++; games += played; pushAccum += played;
       const gps = (played / ((Date.now() - it0) / 1000)).toFixed(1);
-      log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s" + (stop ? " (wound down)" : ""));
+      log("iter " + iter + " (" + games.toLocaleString() + " games): +" + newData.length + " samples, buf " + buf.length.toLocaleString() + ", " + steps + " steps, loss " + loss.toFixed(3) + " · " + gps + " games/s" + (stop ? " (wound down)" : ""));
       try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
-      if (!stop && !DRY && TOKEN) {                        // auto-push after each FULL iter; the wind-down (partial) iter is pushed once below
-        try { await pushNet(net, iter, games); log("pushed iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("push failed: " + e.message); }
+      if (!stop && !DRY && TOKEN && pushAccum >= PUSH_EVERY) {   // push every PUSH_EVERY games (the wind-down push is below)
+        try { await pushNet(net, iter, games); log("pushed " + games.toLocaleString() + " games (iter " + iter + ")"); pushAccum = 0; } catch (e) { log("push failed: " + e.message); }
       }
     }
     // the while(!stop) condition exits after a wind-down (partial) round; the final push happens below.
