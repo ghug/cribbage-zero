@@ -33,7 +33,7 @@
 
   <h2>Browser tools</h2>
   <a class="card" href="local.html"><b>On-device trainer →</b><span>local.html — self-plays + trains on this device, pushes the net to GitHub.</span></a>
-  <a class="card" href="worker.html"><b>Cloudflare worker mode →</b><span>worker.html — contributes self-play to the (optional) Cloudflare data bus.</span></a>
+  <a class="card" href="worker.html"><b>Cloudflare worker mode (actor) →</b><span>worker.html — this device self-plays as an actor: reads the net from GitHub, uploads sample shards to the data bus for the learner.</span></a>
   <a class="card" href="eval.html"><b>Evaluate the net →</b><span>eval.html — 10000 balanced games vs random + vs hard; recording to the progress branch is a separate manual approval.</span></a>
   <a class="card" href="progress.html"><b>View progress →</b><span>progress.html — graphs net win% over games trained from the progress branch.</span></a>
   <a class="card" href="snapshot.html"><b>Net snapshots &amp; rollback →</b><span>snapshot.html — archive the net to the net-archive branch, or roll back to a saved snapshot.</span></a>
@@ -56,11 +56,15 @@ CZ_TOKEN=&lt;pat&gt; node engine/eval_zero.js --yes      # approve non-interacti
 node engine/snapshot_net.js --list                             # list snapshots
 CZ_TOKEN=&lt;pat&gt; node engine/snapshot_net.js --rollback &lt;name&gt;   # restore (asks y/N)</pre></div>
 
-  <div class="tool"><b>Contribute self-play from a computer</b>
-    <p>Multi-core headless trainer — self-plays into a bounded <b>replay buffer</b> (constant memory), trains
-    shuffled mini-batches, and pushes the net every ~10k games + on wind-down (Ctrl-C). Far faster than a phone.</p>
-    <pre>CZ_TOKEN=&lt;github-pat&gt; node engine/az_contribute.js [gamesPerRound=500] [sims=40]
-# env: CZ_PUSH_GAMES=10000  CZ_BUF=200000  CZ_BATCH=256  CZ_WORKERS=&lt;cores−1&gt;</pre></div>
+  <div class="tool"><b>Contribute self-play from a computer (learner / actor)</b>
+    <p>Multi-core headless self-play. As the <b>learner</b> it trains a bounded <b>replay buffer</b> with shuffled
+    mini-batches, drains the data bus, and pushes the net every ~10k games (+ wind-down). With <code>--actor</code>
+    it only self-plays and uploads sample shards to the bus (reads the net from GitHub, no token). One learner,
+    many actors — see <a href="https://github.com/ghug/cribbage-zero/blob/main/docs/BUS.md" target="_blank" rel="noopener">docs/BUS.md</a>.</p>
+    <pre>CZ_TOKEN=&lt;pat&gt; node engine/az_contribute.js [gamesPerRound=500] [sims=40]            # learner (solo)
+CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;trainer&gt; CZ_TOKEN=&lt;pat&gt; node engine/az_contribute.js         # learner + bus
+CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;worker&gt;  node engine/az_contribute.js --actor                # actor
+# env: CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_WORKERS CZ_SHARD_MAX CZ_BUS_LIMIT</pre></div>
 
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
   (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
