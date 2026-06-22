@@ -57,8 +57,10 @@ node engine/snapshot_net.js --list                             # list snapshots
 CZ_TOKEN=&lt;pat&gt; node engine/snapshot_net.js --rollback &lt;name&gt;   # restore (asks y/N)</pre></div>
 
   <div class="tool"><b>Contribute self-play from a computer</b>
-    <p>Multi-core headless trainer — pulls the net, self-plays + trains, pushes it back. Far faster than a phone.</p>
-    <pre>CZ_TOKEN=&lt;github-pat&gt; node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5]</pre></div>
+    <p>Multi-core headless trainer — self-plays into a bounded <b>replay buffer</b> (constant memory), trains
+    shuffled mini-batches, and pushes the net every ~10k games + on wind-down (Ctrl-C). Far faster than a phone.</p>
+    <pre>CZ_TOKEN=&lt;github-pat&gt; node engine/az_contribute.js [gamesPerRound=500] [sims=40]
+# env: CZ_PUSH_GAMES=10000  CZ_BUF=200000  CZ_BATCH=256  CZ_WORKERS=&lt;cores−1&gt;</pre></div>
 
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
   (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
