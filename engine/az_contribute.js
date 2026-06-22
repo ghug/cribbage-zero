@@ -8,25 +8,31 @@
  * back. The net file is weights + iter + games, so the phone and this script are interchangeable:
  * each resumes from whatever the other last pushed.
  *
- * SINGLE-WRITER: the net is one blob and the push is a force-push, so run only ONE trainer at a time
- * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
+ * SINGLE-WRITER LEARNER: only ONE machine trains + pushes the net (force-push). To use MORE machines,
+ * run them as ACTORS (--actor): they self-play and upload sample shards to the Cloudflare data bus; the
+ * single learner drains the bus into its replay buffer alongside its own self-play. The learner is also
+ * an actor (its self-play goes straight into its buffer). Never run two learners.
  *
  * Usage:
- *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerRound=500] [sims=40]
- *   Trains from a bounded REPLAY BUFFER (constant memory): each round self-plays gamesPerRound against a fresh
- *   net snapshot, adds them to a sliding window, and does shuffled mini-batch SGD from the window. Pushes the
- *   net every CZ_PUSH_GAMES games (default 10000) + once on wind-down (Ctrl-C). A local checkpoint is written
- *   every round (crash safety); resume reads the small info file FIRST and only pulls the multi-MB net if newer.
+ *   LEARNER:  CZ_TOKEN=<pat> [CZ_BUS_URL=.. CZ_BUS_TOKEN=<trainer-token>] node engine/az_contribute.js [gamesPerRound=500] [sims=40]
+ *   ACTOR:    CZ_BUS_URL=.. CZ_BUS_TOKEN=<worker-token> node engine/az_contribute.js --actor [gamesPerRound] [sims]
+ *   The learner trains from a bounded REPLAY BUFFER (constant memory): each round self-plays gamesPerRound
+ *   against a fresh net snapshot, drains the bus, runs shuffled mini-batch SGD from the window, and pushes the
+ *   net every CZ_PUSH_GAMES games (+ on wind-down). An actor only self-plays → uploads shards → refreshes the
+ *   net from GitHub when the learner advances it (no GitHub token needed — it reads the public net).
  * Env:
- *   CZ_TOKEN       GitHub PAT with Contents:read+write on the repo (required, unless --dry)
+ *   CZ_TOKEN       GitHub PAT (learner only — Contents:write to push the net)
  *   CZ_REPO        target repo (default "ghug/cribbage-zero")
  *   CZ_WORKERS     self-play worker threads (default: CPU cores − 1)
  *   CZ_CKPT        local checkpoint path (default: engine/az_contribute_ckpt.json)
  *   CZ_PUSH_GAMES  games between GitHub pushes (default 10000)
- *   CZ_BUF         replay buffer max samples (default 200000)
- *   CZ_BATCH       SGD mini-batch size (default 256)
+ *   CZ_BUF / CZ_BATCH   replay buffer max samples (200000) / SGD mini-batch size (256)
+ *   CZ_BUS_URL     data-bus Worker URL (enables actor uploads / learner draining)
+ *   CZ_BUS_TOKEN   bus bearer token — the WORKER token for actors, the TRAINER token for the learner
+ *   CZ_SHARD_MAX / CZ_BUS_LIMIT   samples per uploaded shard (2000) / shards drained per round (400)
+ *   CZ_ID          stable id for this device (default: hostname-pid)
  * Flags:
- *   --dry       train but never push (pull + self-play + train only — safe smoke test)
+ *   --actor     run as an actor (upload shards, no train/push); --dry  no upload/push (smoke test)
  *
  * It NEVER overwrites the cloud net with a blank one: it only starts fresh when the branch genuinely has
  * no net (a clean 404). If it can't read the net, or the net is a different architecture, it refuses to
@@ -39,6 +45,7 @@ const fs = require("fs");
 const path = require("path");
 const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 const { makeRng, selfPlay, freshNet, netToObj, netFromObj, writeAtomic, INPUT_DIM } = require("./az_common.js");
+const { makeSync } = require("./az_sync.js");   // data-bus client (shards queue); only used when CZ_BUS_URL is set
 
 /* ---------------- WORKER: self-play against a net snapshot, hand samples back ---------------- */
 if (!isMainThread) {
@@ -70,6 +77,13 @@ const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().l
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
+// data bus (optional): ACTOR uploads self-play shards to the bus + pulls the net from GitHub (no train/push);
+// the learner drains the bus into its replay buffer alongside its own self-play.
+const ACTOR = process.argv.includes("--actor");
+const BUS_URL = process.env.CZ_BUS_URL || "";
+const BUS_TOKEN = process.env.CZ_BUS_TOKEN || "";
+const SHARD_MAX = parseInt(process.env.CZ_SHARD_MAX, 10) || 2000;     // samples per uploaded shard (keeps a D1 row small)
+const BUS_LIMIT = parseInt(process.env.CZ_BUS_LIMIT, 10) || 400;      // max shards the learner drains per round
 const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", INFOPATH = "checkpoints/info.json";
 const LOCAL = process.env.CZ_CKPT || path.join(__dirname, "az_contribute_ckpt.json");   // crash-safety: saved every round, no network
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
@@ -100,19 +114,17 @@ async function gh(method, path, body) {
   if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
   return { status: res.status, body: j };
 }
+// read headers for a public GET — auth only when a GitHub token is set (actors read the public net token-lessly)
+function readHeaders(accept) { const H = { Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-contribute" }; if (TOKEN) H.Authorization = "Bearer " + TOKEN; return H; }
 async function pullNet() {   // RAW media type — the net is multi-MB and the JSON repr only inlines content ≤1MB
-  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, {
-    headers: { Authorization: "Bearer " + TOKEN, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-contribute" },
-  });
+  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, { headers: readHeaders("application/vnd.github.raw") });
   if (res.status === 404) return null;
   if (res.status >= 400) throw new Error("pull net -> " + res.status);
   return JSON.parse(await res.text());
 }
 // small "is the cloud net newer?" probe — read FIRST so we don't pull the multi-MB net unless we must.
 async function pullInfo() {   // {games, iter} or null if the info file doesn't exist yet
-  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, {
-    headers: { Authorization: "Bearer " + TOKEN, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-contribute" },
-  });
+  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, { headers: readHeaders("application/vnd.github.raw") });
   if (res.status === 404) return null;
   if (res.status >= 400) throw new Error("pull info -> " + res.status);
   return JSON.parse(await res.text());
@@ -140,6 +152,15 @@ function trainReplay(net, buf, steps, batch, lr, rng) {
 
 (async () => {
   let net, iter = 0, games = 0;
+  const sync = (BUS_URL && BUS_TOKEN) ? makeSync({ apiUrl: BUS_URL, token: BUS_TOKEN, workerId: "az-" + (process.env.CZ_ID || (os.hostname() + "-" + process.pid)).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 56) }) : null;
+
+  if (ACTOR) {   // actor: play against the GitHub net, upload self-play shards to the bus (no train, no net push)
+    if (!sync) { console.error("az_contribute --actor: set CZ_BUS_URL and CZ_BUS_TOKEN"); process.exit(1); }
+    let remote; try { remote = await pullNet(); } catch (e) { console.error("actor: can't read the net (" + e.message + ")"); process.exit(1); }
+    if (!remote || !validCkpt(remote)) { console.error("actor: no compatible net on GitHub yet — start the learner first"); process.exit(1); }
+    net = netFromObj(remote); iter = remote.iter || 0;
+    log("ACTOR — playing against net iter " + iter + " (" + (remote.games || 0).toLocaleString() + " games); uploading shards to the bus" + (DRY ? " [DRY: not uploading]" : ""));
+  } else {
 
   // local checkpoint first — its games count gates whether we even need to download the multi-MB cloud net
   let local = null;
@@ -186,6 +207,7 @@ function trainReplay(net, buf, steps, batch, lr, rng) {
   }
 
   if (!net) { net = freshNet(HIDDEN); iter = 0; games = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ", INPUT_DIM " + INPUT_DIM + ")"); }
+  }   // end learner resume
 
   // spawn the self-play worker pool (one per core by default), kept alive across rounds.
   // split CHUNK across workers so every ROUND is exactly CHUNK games — no rounding drift.
@@ -204,9 +226,28 @@ function trainReplay(net, buf, steps, batch, lr, rng) {
     wk.postMessage({ net: netObj, games: perWorkerCounts[w] });
   })));
 
-  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims · replay buffer " + BUF_CAP.toLocaleString() + " · push every " + PUSH_EVERY.toLocaleString() + " games (+ wind-down)");
+  log((DRY ? "[DRY] " : "") + WORKERS + " workers · " + perRound + " games/round · " + SIMS + " sims" +
+    (ACTOR ? " · ACTOR → shards ≤" + SHARD_MAX + "/upload" : " · replay buffer " + BUF_CAP.toLocaleString() + " · push every " + PUSH_EVERY.toLocaleString() + " games" + (sync ? " · draining bus" : "")));
   let stop = false;
-  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; Atomics.store(stopFlag, 0, 1); log("winding down — finishing the in-progress game, then pushing…"); });
+  process.on("SIGINT", () => { if (stop) process.exit(1); stop = true; Atomics.store(stopFlag, 0, 1); log("winding down — finishing the in-progress game, then stopping…"); });
+
+  if (ACTOR) {   // ===== ACTOR loop: self-play -> upload shards -> refresh the net when the learner advances it =====
+    let uploaded = 0; const ta = Date.now();
+    while (!stop) {
+      const batches = await playRound(netToObj(net, iter));
+      let samples = [], played = 0; for (const b of batches) { samples = samples.concat(b.samples); played += b.played; }
+      if (played > 0) {
+        let ok = 0;
+        if (!DRY) for (let i = 0; i < samples.length; i += SHARD_MAX) { try { await sync.putShard(samples.slice(i, i + SHARD_MAX)); ok++; } catch (e) { log("shard upload failed: " + e.message); } }
+        uploaded += played;
+        log((DRY ? "[DRY] " : "") + "uploaded " + played + " games (" + samples.length + " samples, " + ok + " shards) · " + uploaded.toLocaleString() + " total" + (stop ? " (wound down)" : ""));
+      }
+      try { const info = await pullInfo(); if (info && (info.iter || 0) > iter) { const r = await pullNet(); if (r && validCkpt(r)) { net = netFromObj(r); iter = info.iter; log("refreshed to net iter " + iter + " (" + (info.games || 0).toLocaleString() + " games)"); } } } catch (e) {}
+    }
+    await Promise.all(workers.map((wk) => wk.terminate()));
+    log("stopped — uploaded " + uploaded.toLocaleString() + " games this run (" + ((Date.now() - ta) / 1000).toFixed(0) + "s)");
+    process.exit(0);
+  }
 
   const buf = [];          // replay buffer: bounded sliding window of recent samples (constant memory, not the whole run)
   let pushAccum = 0;       // games since the last GitHub push
@@ -216,14 +257,19 @@ function trainReplay(net, buf, steps, batch, lr, rng) {
     const batches = await playRound(netToObj(net, iter));   // workers self-play CHUNK games against this snapshot
     let newData = [], played = 0; for (const b of batches) { newData = newData.concat(b.samples); played += b.played; }   // played < CHUNK on wind-down
     if (played > 0) {
-      for (const d of newData) buf.push(d);                 // add to the replay buffer, evict the oldest beyond the cap
-      if (buf.length > BUF_CAP) buf.splice(0, buf.length - BUF_CAP);
-      const steps = Math.max(1, Math.round(TRAIN_PER_SAMPLE * newData.length / BATCH));
+      for (const d of newData) buf.push(d);                 // local self-play into the replay buffer
+      let remoteSamples = 0, remoteIds = [];                // + drain the actors' shards from the bus into the SAME buffer
+      if (sync) { try { const r = await sync.getShards(BUS_LIMIT); for (const sh of r.shards) { for (const d of sh.samples) buf.push(d); remoteSamples += sh.samples.length; remoteIds.push(sh.id); } } catch (e) { log("bus drain failed: " + e.message); } }
+      if (buf.length > BUF_CAP) buf.splice(0, buf.length - BUF_CAP);   // evict oldest beyond the cap
+      const newSamples = newData.length + remoteSamples;
+      const steps = Math.max(1, Math.round(TRAIN_PER_SAMPLE * newSamples / BATCH));
       const loss = trainReplay(net, buf, steps, BATCH, LR, rng);   // shuffled mini-batches sampled from the whole buffer
-      iter++; games += played; pushAccum += played;
+      const remoteGames = remoteSamples ? Math.round(remoteSamples / Math.max(1, newData.length / Math.max(1, played))) : 0;   // estimate via local samples-per-game
+      iter++; games += played + remoteGames; pushAccum += played + remoteGames;
       const gps = (played / ((Date.now() - it0) / 1000)).toFixed(1);
-      log("iter " + iter + " (" + games.toLocaleString() + " games): +" + newData.length + " samples, buf " + buf.length.toLocaleString() + ", " + steps + " steps, loss " + loss.toFixed(3) + " · " + gps + " games/s" + (stop ? " (wound down)" : ""));
+      log("iter " + iter + " (" + games.toLocaleString() + " games): +" + newSamples + " samples (" + newData.length + " local" + (remoteSamples ? " + " + remoteSamples + " bus/" + remoteIds.length + "sh" : "") + "), buf " + buf.length.toLocaleString() + ", " + steps + " steps, loss " + loss.toFixed(3) + " · " + gps + " g/s" + (stop ? " (wound down)" : ""));
       try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
+      if (sync && remoteIds.length) { try { await sync.prune(remoteIds); } catch (e) { log("bus prune failed: " + e.message); } }   // delete consumed shards AFTER ingesting
       if (!stop && !DRY && TOKEN && pushAccum >= PUSH_EVERY) {   // push every PUSH_EVERY games (the wind-down push is below)
         try { await pushNet(net, iter, games); log("pushed " + games.toLocaleString() + " games (iter " + iter + ")"); pushAccum = 0; } catch (e) { log("push failed: " + e.message); }
       }

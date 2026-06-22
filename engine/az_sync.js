@@ -28,10 +28,8 @@ function makeSync(cfg) {
     }
   }
   return {
-    getCheckpoint: () => withRetry(() => req("GET", "/checkpoint")),
     putShard: (samples, workerId) => withRetry(() => req("POST", "/shard", { workerId: workerId || cfg.workerId, samples })),
-    getShards: (limit) => withRetry(() => req("GET", "/shards?limit=" + (limit || 100))),
-    putCheckpoint: (obj) => withRetry(() => req("POST", "/checkpoint", obj)),
+    getShards: (limit) => withRetry(() => req("GET", "/shards?limit=" + (limit || 200))),
     prune: (ids) => withRetry(() => req("POST", "/prune", { ids })),
     stats: () => withRetry(() => req("GET", "/stats")),
   };
