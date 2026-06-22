@@ -12,9 +12,10 @@
  * (this OR the phone, not both) — concurrent trainers overwrite each other's games.
  *
  * Usage:
- *   CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=40]
- *   Pushes the net to GitHub ONLY on wind-down (Ctrl-C) — never periodically. It DOES write a local
- *   checkpoint file every round (no network) for crash safety, and resumes from it if it's ahead of the cloud.
+  CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=10000] [sims=40]
+ *   Pushes the net to GitHub after each FULL iter (default 10000 games) and once on wind-down (Ctrl-C).
+ *   Also writes a local checkpoint every round (no network) for crash safety, and on resume checks the small
+ *   info file FIRST (cloud games count) so it only downloads the multi-MB net when the cloud is actually newer.
  * Env:
  *   CZ_TOKEN    GitHub PAT with Contents:read+write on the repo (required, unless --dry)
  *   CZ_REPO     target repo (default "ghug/cribbage-zero")
@@ -55,13 +56,13 @@ if (!isMainThread) {
 
 /* ---------------- MAIN (learner): pull net, fan self-play across workers, train, push ---------------- */
 const HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, CPUCT = 1.5;   // self-play only — no strength-vs-random eval
-const GAMES = parseInt(process.argv[2], 10) || 500;
+const GAMES = parseInt(process.argv[2], 10) || 10000;
 const SIMS = parseInt(process.argv[3], 10) || 40;
 const WORKERS = Math.max(1, parseInt(process.env.CZ_WORKERS, 10) || (os.cpus().length - 1));
 const DRY = process.argv.includes("--dry");
 const REPO = process.env.CZ_REPO || "ghug/cribbage-zero";
 const TOKEN = process.env.CZ_TOKEN || "";
-const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
+const BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", INFOPATH = "checkpoints/info.json";
 const LOCAL = process.env.CZ_CKPT || path.join(__dirname, "az_contribute_ckpt.json");   // crash-safety: saved every round, no network
 const rng = makeRng((Date.now() ^ (process.pid << 8)) >>> 0);
 const now = () => new Date().toLocaleTimeString();
@@ -99,10 +100,21 @@ async function pullNet() {   // RAW media type — the net is multi-MB and the J
   if (res.status >= 400) throw new Error("pull net -> " + res.status);
   return JSON.parse(await res.text());
 }
-async function pushNet(net, iter, games) {   // pushes ONLY the net file; progress.csv is on its own branch, untouched
+// small "is the cloud net newer?" probe — read FIRST so we don't pull the multi-MB net unless we must.
+async function pullInfo() {   // {games, iter} or null if the info file doesn't exist yet
+  const res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, {
+    headers: { Authorization: "Bearer " + TOKEN, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-contribute" },
+  });
+  if (res.status === 404) return null;
+  if (res.status >= 400) throw new Error("pull info -> " + res.status);
+  return JSON.parse(await res.text());
+}
+async function pushNet(net, iter, games) {   // pushes the net file + the small info file; progress.csv is on its own branch
   const netBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify(ckpt(net, iter, games))), encoding: "base64" });
+  const infoBlob = await gh("POST", "/repos/" + REPO + "/git/blobs", { content: b64(JSON.stringify({ games, iter })), encoding: "base64" });
   const tree = await gh("POST", "/repos/" + REPO + "/git/trees", { tree: [
     { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
+    { path: INFOPATH, mode: "100644", type: "blob", sha: infoBlob.body.sha },
   ] });
   const commit = await gh("POST", "/repos/" + REPO + "/git/commits", { message: "net @ iter " + iter + " (" + games + " games)", tree: tree.body.sha, parents: [] });
   let ref; try { ref = await gh("GET", "/repos/" + REPO + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
@@ -112,33 +124,50 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
 
 (async () => {
   let net, iter = 0, games = 0;
-  if (TOKEN) {
-    log("pulling net from " + REPO + " @ " + BRANCH + " …");
-    let remote, pullErr = null;
-    try { remote = await pullNet(); } catch (e) { pullErr = e; }   // pullNet returns null on a clean 404, throws otherwise
-    if (pullErr) {                                        // couldn't READ the cloud net — refuse, so we never overwrite it blind
-      log("pull failed: " + pullErr.message);
-      if (!DRY) { console.error("az_contribute: refusing to start — can't read the cloud net, and training would push a net that overwrites it. Fix the token/connection and retry."); process.exit(1); }
-      log("dry run — training a throwaway local net (won't push)");
-    } else if (remote && validCkpt(remote)) {
-      net = netFromObj(remote);
-      games = remote.games || 0; iter = remote.iter || 0;   // games/iter live in the net file
-      log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")");
-    } else if (remote) {                                 // a net exists but doesn't match this build — a reset must be deliberate, not automatic
-      log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ")");
-      if (!DRY) { console.error("az_contribute: refusing to start — the cloud net doesn't match this build. Reset the `net` branch deliberately before contributing."); process.exit(1); }
-      log("dry run — training a throwaway local net (won't push)");
-    } else {
-      log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
-    }
-  }
-  // crash-safety: a LOCAL checkpoint ahead of the cloud (trained but not yet wind-down-pushed) wins
+
+  // local checkpoint first — its games count gates whether we even need to download the multi-MB cloud net
   let local = null;
   try { local = JSON.parse(fs.readFileSync(LOCAL, "utf8")); } catch (e) {}
-  if (local && validCkpt(local) && (local.games || 0) > games) {
+  const localOk = local && validCkpt(local);
+  if (local && !localOk) log("local checkpoint is a different architecture — ignoring it");
+  const localGames = localOk ? (local.games || 0) : -1;
+
+  if (TOKEN) {
+    // 1. cheap probe: the info file reports the cloud net's games count without downloading the whole net
+    let info = null, infoFailed = false;
+    try { info = await pullInfo(); } catch (e) { infoFailed = true; log("info check failed (" + e.message + ") — checking the net file"); }
+
+    if (info && (info.games || 0) <= localGames) {
+      log("info: cloud net (" + (info.games || 0).toLocaleString() + " games) not newer than local (" + localGames.toLocaleString() + ") — skipping the net download");
+      // net stays unset here; the local override below resumes from the local checkpoint
+    } else {
+      // cloud is newer (per info), OR there's no info file yet / it failed — read the net file itself
+      if (info) log("info: cloud net (" + (info.games || 0).toLocaleString() + " games) is newer than local — pulling net");
+      else if (!infoFailed) log("no info file yet — checking the net file");
+      log("pulling net from " + REPO + " @ " + BRANCH + " …");
+      let remote, pullErr = null;
+      try { remote = await pullNet(); } catch (e) { pullErr = e; }   // pullNet returns null on a clean 404, throws otherwise
+      if (pullErr) {                                       // couldn't READ the cloud net — refuse, so we never overwrite it blind
+        log("pull failed: " + pullErr.message);
+        if (!DRY) { console.error("az_contribute: refusing to start — can't read the cloud net, and training would push a net that overwrites it. Fix the token/connection and retry."); process.exit(1); }
+        log("dry run — training a throwaway local net (won't push)");
+      } else if (remote && validCkpt(remote)) {
+        net = netFromObj(remote); games = remote.games || 0; iter = remote.iter || 0;
+        log("resuming: " + games.toLocaleString() + " games trained (iter " + iter + ")");
+      } else if (remote) {                                // a net exists but doesn't match this build — a reset must be deliberate
+        log("remote net is a different architecture (nIn " + remote.nIn + " ≠ " + INPUT_DIM + ")");
+        if (!DRY) { console.error("az_contribute: refusing to start — the cloud net doesn't match this build. Reset the `net` branch deliberately before contributing."); process.exit(1); }
+        log("dry run — training a throwaway local net (won't push)");
+      } else {
+        log("no net on GitHub yet — starting fresh (will create it)");   // genuine 404: nothing to overwrite
+      }
+    }
+  }
+  // local checkpoint ahead of the cloud (trained but not yet pushed) wins
+  if (localOk && (local.games || 0) > games) {
     net = netFromObj(local); iter = local.iter || 0; games = local.games || 0;
-    log("resuming from LOCAL checkpoint (ahead of cloud): " + games.toLocaleString() + " games (iter " + iter + ") @ " + LOCAL);
-  } else if (local && !validCkpt(local)) { log("local checkpoint is a different architecture — ignoring it"); }
+    log("resuming from LOCAL checkpoint: " + games.toLocaleString() + " games (iter " + iter + ") @ " + LOCAL);
+  }
 
   if (!net) { net = freshNet(HIDDEN); iter = 0; games = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ", INPUT_DIM " + INPUT_DIM + ")"); }
 
@@ -174,9 +203,11 @@ async function pushNet(net, iter, games) {   // pushes ONLY the net file; progre
       const gps = (played / ((Date.now() - it0) / 1000)).toFixed(1);
       log("iter " + iter + " (" + games.toLocaleString() + " games): " + data.length + " samples, loss " + loss.toFixed(3) + " · " + gps + " games/s" + (stop ? " (wound down)" : ""));
       try { writeAtomic(LOCAL, JSON.stringify(ckpt(net, iter, games))); } catch (e) { log("local checkpoint save failed: " + e.message); }   // crash-safety; no network
+      if (!stop && !DRY && TOKEN) {                        // auto-push after each FULL iter; the wind-down (partial) iter is pushed once below
+        try { await pushNet(net, iter, games); log("pushed iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("push failed: " + e.message); }
+      }
     }
-    // no periodic GitHub push — the net is pushed once on wind-down (below); restart resumes from LOCAL. The
-    // while(!stop) condition exits after this (possibly partial) round, then we push.
+    // the while(!stop) condition exits after a wind-down (partial) round; the final push happens below.
   }
   await Promise.all(workers.map((wk) => wk.terminate()));
   if (!DRY && TOKEN) { try { await pushNet(net, iter, games); log("wind-down push: iter " + iter + " (" + games.toLocaleString() + " games)"); } catch (e) { log("wind-down push failed: " + e.message); } }

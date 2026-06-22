@@ -122,7 +122,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var VERSION = "0.1.28";   // repo release version (bumped every release); android versionName only catches up on an APK release
   var KEY = "cz_local_ckpt", HIDDEN = [256, 256, 256, 256], EPOCHS = 2, LR = 0.02, TRAIN_CHUNK = 1000;
-  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json";
+  var BRANCH = "net", CKPATH = "checkpoints/az_checkpoint.json", INFOPATH = "checkpoints/info.json";
   var running = false, winding = false, net = null, iter = 0, totalGames = 0, lastLoss = 0, gamesSession = 0, startTime = 0;
   var token = "", repo = "ghug/cribbage-zero";
   var rng = makeRng((Date.now() ^ 0x51ed) >>> 0);
@@ -176,16 +176,26 @@
     return fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(CKPATH) + "?ref=" + BRANCH, { headers: H, cache: "no-store" });
   }
   async function pullNet() { var res = await netRawFetch(); if (res.status === 404) return null; if (!res.ok) throw new Error("pull net -> " + res.status); return JSON.parse(await res.text()); }
+  // the small info file (games/iter) — read first so we don't pull the multi-MB net unless the cloud is newer
+  async function infoRawFetch() {
+    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token) H.Authorization = "Bearer " + token;
+    return fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, { headers: H, cache: "no-store" });
+  }
+  async function pullInfo() { var res = await infoRawFetch(); if (res.status === 404) return null; if (!res.ok) throw new Error("pull info -> " + res.status); return JSON.parse(await res.text()); }
 
-  // read-only "games trained" status — token-LESS (public repo). Cheap path: parse the net branch's head
-  // commit message ("net @ iter X (Y games)"); fall back to reading the checkpoint's games/iter (raw).
+  // read-only "games trained" status — token-LESS (public repo). Prefer the info file (small, canonical);
+  // fall back to the head commit message ("net @ iter X (Y games)"), then the whole net file (raw).
   async function pullNetMeta() {
-    var H = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
-    var tk = $("token").value.trim(); if (tk) H.Authorization = "Bearer " + tk;   // optional — just raises the rate limit
+    var tk = $("token").value.trim();
+    var raw = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" }; if (tk) raw.Authorization = "Bearer " + tk;
+    try { var ir = await fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, { headers: raw, cache: "no-store" });
+      if (ir.ok) { var io = JSON.parse(await ir.text()); return { iter: io.iter || 0, games: io.games || 0 }; } } catch (e) {}
+    var H = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }; if (tk) H.Authorization = "Bearer " + tk;
     var r = await fetch("https://api.github.com/repos/" + repo + "/commits/" + BRANCH, { headers: H, cache: "no-store" });
     if (r.ok) { var j = await r.json(); var m = ((j.commit && j.commit.message) || "").match(/iter\s+(\d+)\s*\(([\d,]+)\s*games\)/i);
       if (m) return { iter: parseInt(m[1], 10), games: parseInt(m[2].replace(/,/g, ""), 10) }; }
-    var c = await netRawFetch();   // heavier fallback: pulls the whole net to read games/iter
+    var c = await netRawFetch();   // heaviest fallback: pulls the whole net to read games/iter
     if (c.ok) { var o = JSON.parse(await c.text()); return { iter: o.iter || 0, games: o.games || 0 }; }
     if (r.status === 403 || c.status === 403) throw new Error("rate-limited — try again shortly");
     return null;
@@ -205,10 +215,12 @@
     refreshing = false;
   }
   async function pushNet() {
-    // pushes ONLY the net file (orphan commit) — nothing else lives on the net branch.
+    // orphan commit with the net file + the small info file (games/iter, read first by resume to avoid a multi-MB pull).
     var netBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify(ckObj())), encoding: "base64" });
+    var infoBlob = await gh("POST", "/repos/" + repo + "/git/blobs", { content: b64(JSON.stringify({ games: totalGames, iter: iter })), encoding: "base64" });
     var tree = await gh("POST", "/repos/" + repo + "/git/trees", { tree: [
-      { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha }
+      { path: CKPATH, mode: "100644", type: "blob", sha: netBlob.body.sha },
+      { path: INFOPATH, mode: "100644", type: "blob", sha: infoBlob.body.sha }
     ] });
     var commit = await gh("POST", "/repos/" + repo + "/git/commits", { message: "net @ iter " + iter + " (" + totalGames + " games)", tree: tree.body.sha, parents: [] });
     var ref; try { ref = await gh("GET", "/repos/" + repo + "/git/ref/heads/" + BRANCH); } catch (e) { ref = { status: 404 }; }
@@ -245,15 +257,22 @@
     if (!token && !(await confirmModal("No GitHub token", "Training resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?", "Continue"))) return;
     if (!token) log("⚠ no token — read-only: progress won't push until you add a token in Settings");
 
-    // always pull the net first (authenticated if a token is set, else a public read) — only start once we have it
-    setRunning(true); startTime = Date.now(); gamesSession = 0; progress("pulling net…");
-    var remoteO = null;
-    try { remoteO = await pullNet(); }
-    catch (e) { log("pull failed: " + e.message + " — not starting (a net read is required to begin)"); setRunning(false); progress(""); return; }
-    if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
-    log(remoteO ? "pulled GitHub net: " + (remoteO.games || 0).toLocaleString() + " games (iter " + (remoteO.iter || 0) + ")" : "no net on GitHub yet");
-
+    // check the small info file FIRST — only download the multi-MB net if the cloud is actually newer than local
+    setRunning(true); startTime = Date.now(); gamesSession = 0; progress("checking GitHub…");
     var localO = loadLocalObj();
+    var localGames = (localO && validCkpt(localO)) ? (localO.games || 0) : -1;
+    var remoteO = null, info = null;
+    try { info = await pullInfo(); } catch (e) { /* info missing/failed → fall through to pulling the net */ }
+    if (info && (info.games || 0) <= localGames) {
+      log("info: GitHub net (" + (info.games || 0).toLocaleString() + " games) not newer than local (" + localGames.toLocaleString() + ") — using local, skipping the net download");
+    } else {
+      progress("pulling net…");
+      try { remoteO = await pullNet(); }
+      catch (e) { log("pull failed: " + e.message + " — not starting (a net read is required to begin)"); setRunning(false); progress(""); return; }
+      if (remoteO && !validCkpt(remoteO)) { log("GitHub net is malformed — ignoring it"); remoteO = null; }
+      log(remoteO ? "pulled GitHub net: " + (remoteO.games || 0).toLocaleString() + " games (iter " + (remoteO.iter || 0) + ")" : "no net on GitHub yet");
+    }
+
     var best = (localO && remoteO) ? ((remoteO.iter || 0) >= (localO.iter || 0) ? remoteO : localO) : (localO || remoteO);
     if (best) { net = netFromObj(best); iter = best.iter || 0; totalGames = best.games || 0; log("resuming: " + totalGames.toLocaleString() + " games trained (iter " + iter + ")" + (best.games == null ? " — prior games unknown, counting from now" : "")); }
     else { net = freshNet(HIDDEN); iter = 0; totalGames = 0; log("fresh net (hidden " + JSON.stringify(HIDDEN) + ")"); }
