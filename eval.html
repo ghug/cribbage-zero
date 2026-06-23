@@ -18,6 +18,10 @@
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
   button.act { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
   #run { background:var(--good); color:#10331f; } #record { background:var(--gold); color:#241f0e; }
+  .cardbtns { display:flex; gap:6px; margin-top:12px; }
+  .cardbtns button { flex:1; padding:9px 0; border-radius:9px; border:0; font:600 13px inherit; cursor:pointer; }
+  .crun { background:var(--good); color:#10331f; } .crec { background:var(--gold); color:#241f0e; }
+  .cardbtns button:disabled { opacity:.4; cursor:default; }
   button:disabled { opacity:.4; cursor:default; }
   .results { display:flex; gap:10px; margin:14px 0 8px; }
   .res { flex:1; text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:16px 8px; }
@@ -38,22 +42,25 @@
 <body>
 <div class="wrap">
   <h1>♣ Cribbage Zero — Evaluate</h1>
-  <p class="sub">Pulls the latest net, plays balanced games vs random and vs the hard bot. Recording the result on the
+  <p class="sub">Pulls the latest net and plays balanced games vs random and/or the hard bot — <b>run and record each
+  independently</b>. Recording a result on the
   <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch is a
-  separate, manual step you approve <i>after</i> the eval finishes. <a href="dev.html">← dev tools</a></p>
+  separate, manual step you approve per opponent. <a href="dev.html">← dev tools</a></p>
 
   <div class="row">
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="5000" /></div>
     <div><label for="sims">MCTS sims (0 = greedy)</label><input id="sims" type="number" min="0" value="0" /></div>
   </div>
 
-  <div class="btns">
-    <button id="run" class="act">Run evaluation</button>
-    <button id="record" class="act" disabled>Record to progress</button>
-  </div>
   <div class="results">
-    <div class="res"><b id="rRand">—</b><span>% vs random</span></div>
-    <div class="res"><b id="rHard">—</b><span>% vs hard</span></div>
+    <div class="res">
+      <b id="rRand">—</b><span>% vs random</span>
+      <div class="cardbtns"><button id="runRand" class="crun">Run</button><button id="recRand" class="crec" disabled>Record</button></div>
+    </div>
+    <div class="res">
+      <b id="rHard">—</b><span>% vs hard</span>
+      <div class="cardbtns"><button id="runHard" class="crun">Run</button><button id="recHard" class="crec" disabled>Record</button></div>
+    </div>
   </div>
   <div id="status"></div>
   <div id="log"></div>
@@ -169,12 +176,18 @@
     });
   }
 
-  var last = null;   // { games, vsRand, vsHard } from the most recent eval — what "Record" will push
+  // per-opponent last eval, recorded independently: results.random / results.hard = { games, pct, testGames, sims }
+  var results = { random: null, hard: null };
+  function recordable(r) { return !!r && r.testGames >= 10000 && r.sims === 0; }
+  function refreshRec(b) { $("recRand").disabled = b || !recordable(results.random); $("recHard").disabled = b || !recordable(results.hard); }
+  function setBusyUI(b) { $("runRand").disabled = b; $("runHard").disabled = b; refreshRec(b); }
+  function oppOf(which) { return which === "random" ? function (g) { return randomLegal(g.decision.slots, rng); } : function (g, p) { return hardSlot(g, p); }; }
 
-  // run the evaluation ONLY — never records; recording is a separate manual approval below
-  async function runEval() {
-    if (busy) return; busy = true; $("run").disabled = true; $("record").disabled = true;
-    $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
+  // run ONE opponent's evaluation, independent of the other; never records
+  async function runOne(which) {
+    if (busy) return; busy = true; setBusyUI(true);
+    var label = which === "random" ? "vs random" : "vs hard", resEl = which === "random" ? "rRand" : "rHard";
+    $(resEl).textContent = "…"; results[which] = null;
     repo = CZ.repo();
     token = CZ.token();   // reads use the token when present (higher rate limit), token-less otherwise
     sims = Math.max(0, parseInt($("sims").value, 10) || 0);   // 0 = greedy policy; >0 = MCTS per move (the canonical progress metric is sims=0)
@@ -182,49 +195,45 @@
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
       status("pulling net …"); await sleep(0);
-      var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages)
+      var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages, no re-download)
       if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
       var ck = cloud.obj, net = netFromObj(ck), trained = ck.games || 0;
-      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games per match");
-      var vsRand = await runMatch(net, function (g) { return randomLegal(g.decision.slots, rng); }, games, "vs random");
-      $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
-      var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");
-      $("rHard").textContent = vsHard; log("vs hard: " + vsHard + "%");
-      last = { games: trained, vsRand: vsRand, vsHard: vsHard, testGames: games, sims: sims };
-      var why = [];
-      if (sims !== 0) why.push("MCTS sims must be 0 (greedy baseline)");
-      if (games < 10000) why.push("need ≥ 10000 balanced games (Decks ≥ 5000)");
-      if (!why.length) { $("record").disabled = false; log("eval done — review, then tap “Record to progress” to save this point (nothing recorded yet)"); }
-      else { $("record").disabled = true; log("eval done — not recordable: " + why.join("; ")); }
-      status("done — not recorded");
+      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label);
+      var pct = await runMatch(net, oppOf(which), games, label);
+      $(resEl).textContent = pct; log(label + ": " + pct + "%");
+      results[which] = { games: trained, pct: pct, testGames: games, sims: sims };
+      status("done — " + label + (recordable(results[which]) ? " · recordable" : " · not recordable (need ≥ 10000 games & sims = 0)"));
     } catch (e) { log("error: " + e.message); status("error"); }
-    busy = false; $("run").disabled = false;
+    busy = false; setBusyUI(false);
   }
 
-  // manual approval step: push the last eval's two points to the progress branch
-  async function recordLast() {
-    if (busy || !last) return;
-    if (last.testGames < 10000 || last.sims !== 0) { status("not recordable — need ≥ 10000 games and 0 MCTS sims"); log("recording blocked: " + last.testGames + " games, " + last.sims + " sims (need ≥ 10000 games and sims = 0)"); return; }
+  // manual approval: push ONE opponent's last point to its own progress CSV, independent of the other
+  async function recordOne(which) {
+    if (busy) return;
+    var r = results[which];
+    if (!recordable(r)) { status("not recordable — need ≥ 10000 games and 0 MCTS sims"); return; }
     token = CZ.token();
     if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
-    if (!(await confirmModal("Record to progress?", "net @ " + last.games.toLocaleString() + " games\nvs random: " + last.vsRand + "%\nvs hard:   " + last.vsHard + "%", "Record"))) { log("recording cancelled"); return; }
-    busy = true; $("run").disabled = true; $("record").disabled = true;
+    var file = which === "random" ? "progress-random.csv" : "progress-hard.csv", label = which === "random" ? "vs random" : "vs hard";
+    if (!(await confirmModal("Record " + label + "?", "net @ " + r.games.toLocaleString() + " games\n" + label + ": " + r.pct + "%", "Record"))) { log("recording cancelled"); return; }
+    busy = true; setBusyUI(true);
     repo = CZ.repo();
     try {
-      status("recording …"); await sleep(0);
-      await appendPoint("progress-random.csv", last.games, last.vsRand);
-      await appendPoint("progress-hard.csv", last.games, last.vsHard);
-      log("recorded both points on the progress branch ✓");
-      status("recorded ✓");
-      last = null;                         // consume it so the same eval can't be double-recorded
-    } catch (e) { log("error: " + e.message); status("error"); $("record").disabled = false; }
-    busy = false; $("run").disabled = false;
+      status("recording " + label + " …"); await sleep(0);
+      await appendPoint(file, r.games, r.pct);
+      log("recorded " + label + " (" + r.pct + "% @ " + r.games.toLocaleString() + " games) on the progress branch ✓");
+      status("recorded " + label + " ✓");
+      results[which] = null;               // consume so the same point can't be double-recorded
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false; setBusyUI(false);
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
   // token + repo live in the shared Settings menu (chrome.js / window.CZ)
-  $("run").addEventListener("click", function () { CZ.persist(); runEval(); });
-  $("record").addEventListener("click", function () { CZ.persist(); recordLast(); });
+  $("runRand").addEventListener("click", function () { CZ.persist(); runOne("random"); });
+  $("runHard").addEventListener("click", function () { CZ.persist(); runOne("hard"); });
+  $("recRand").addEventListener("click", function () { CZ.persist(); recordOne("random"); });
+  $("recHard").addEventListener("click", function () { CZ.persist(); recordOne("hard"); });
 })();
 </script>
 </body>
