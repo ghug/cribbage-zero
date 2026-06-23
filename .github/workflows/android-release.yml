@@ -36,6 +36,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install pinned NDK + CMake (for the native engine)
+        run: sdkmanager "ndk;26.3.11579264" "cmake;3.22.1"
+
       - name: Build release APK (unsigned)
         working-directory: android
         run: |
