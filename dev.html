@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Cribbage Zero — Dev Tools</title>
+<title>Cribbage Zero</title>
 <style>
   :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --gold:#d6bc7a; }
   * { box-sizing:border-box; }
@@ -26,10 +26,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>♣ Cribbage Zero — Tools</h1>
-  <p class="sub">A hub for the trainer pages and the command-line dev tools. The trained net lives on the
-  <a href="https://github.com/ghug/cribbage-zero/tree/net" target="_blank" rel="noopener">net</a> branch;
-  strength curves on the <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch.</p>
+  <h1>♣ Cribbage Zero</h1>
 
   <h2>Browser tools</h2>
   <a class="card" href="local.html"><b>On-device trainer →</b><span>local.html — self-plays + trains on this device, pushes the net to GitHub.</span></a>
@@ -67,7 +64,7 @@ CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;worker&gt;  node engine/az_contribute.js --actor 
 # env: CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_WORKERS CZ_SHARD_MAX CZ_BUS_LIMIT</pre></div>
 
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
-  (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
+  (src/winprob.js + src/engine.js's pegChooseDeep).
   Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 <script src="version.js"></script>
