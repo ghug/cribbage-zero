@@ -9,6 +9,7 @@ on:
   push:
     branches: [dev]
     paths:
+      - "index.html"
       - "dev.html"
       - "eval.html"
       - "refresh-trainer.html"
@@ -49,10 +50,10 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/worker _site/src
-          cp dev.html eval.html refresh-trainer.html release-trainer.html snapshot.html progress.html local.html worker.html _site/
-          cp worker/az_bundle.js _site/worker/
+          cp index.html dev.html eval.html refresh-trainer.html release-trainer.html snapshot.html progress.html local.html worker.html _site/
+          cp worker/az_bundle.js worker/az_worker_thread.js _site/worker/   # bundle + the worker.html self-play thread
           cp src/winprob.js _site/src/
-          touch _site/.nojekyll   # serve files verbatim
+          touch _site/.nojekyll   # serve files verbatim (root index.html routes to local/worker mode)
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
