@@ -56,14 +56,21 @@ public:
     f.acts.push_back(x);
     std::vector<double> a = x;
     for (size_t l = 0; l < W.size(); l++) {
-      int dout = (int)b[l].size(), din = (int)a.size();
+      const auto& Wl = W[l]; const auto& bl = b[l];
+      int dout = (int)bl.size(), din = (int)a.size();
       std::vector<double> o(dout);
-      for (int i = 0; i < dout; i++) {
-        double s = b[l][i];
-        const auto& Wi = W[l][i];
-        for (int k = 0; k < din; k++) s += Wi[k] * a[k];
-        o[i] = s > 0 ? s : 0; // ReLU
+      const double* ap = a.data();
+      // 4-way row blocking: load each a[k] once and fan it across 4 output neurons (the inner-loop a[k]
+      // reload was the bottleneck). Bit-identical to the scalar form.
+      int i = 0;
+      for (; i + 4 <= dout; i += 4) {
+        const double* W0 = Wl[i].data(); const double* W1 = Wl[i + 1].data();
+        const double* W2 = Wl[i + 2].data(); const double* W3 = Wl[i + 3].data();
+        double s0 = bl[i], s1 = bl[i + 1], s2 = bl[i + 2], s3 = bl[i + 3];
+        for (int k = 0; k < din; k++) { double ak = ap[k]; s0 += W0[k] * ak; s1 += W1[k] * ak; s2 += W2[k] * ak; s3 += W3[k] * ak; }
+        o[i] = s0 > 0 ? s0 : 0; o[i + 1] = s1 > 0 ? s1 : 0; o[i + 2] = s2 > 0 ? s2 : 0; o[i + 3] = s3 > 0 ? s3 : 0;
       }
+      for (; i < dout; i++) { double s = bl[i]; const double* Wi = Wl[i].data(); for (int k = 0; k < din; k++) s += Wi[k] * ap[k]; o[i] = s > 0 ? s : 0; }
       a = std::move(o);
       f.acts.push_back(a);
     }
