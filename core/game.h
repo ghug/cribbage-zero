@@ -160,8 +160,8 @@ private:
 
 public:
   // ----- net interface: fixed-length features from `player`'s information set (opponent cards hidden) -----
-  std::vector<double> encode(int player) const {
-    std::vector<double> fv;
+  std::vector<float> encode(int player) const {
+    std::vector<float> fv;
     fv.reserve(INPUT_DIM);
     int opp = 1 - player;
     auto pushCard = [&](const Card* c) {

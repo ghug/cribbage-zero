@@ -1,35 +1,35 @@
-// test_net.cpp — numeric gradient check + a toy-learning test (ports engine/az_net.js self-test).
+// test_net.cpp — numeric gradient check + a toy-learning test. Uses NetT<double> so the finite-difference
+// check stays rigorous (production is NetT<float>; same code path). Weights are FLAT per layer (W[l][i*din+k]).
 #include "../net.h"
 #include <cstdio>
 
 using namespace cz;
+using Netd = NetT<double>;
 static int ok = 0, fail = 0;
 static void check(bool c, const char* m) { if (c) ok++; else { fail++; std::printf("  x %s\n", m); } }
 
-static double loss(Net& net, const std::vector<double>& x, double z, const std::vector<double>& pi,
+static double loss(Netd& net, const std::vector<double>& x, double z, const std::vector<double>& pi,
                    const std::vector<bool>& legal, double cPol = 1.0) {
-  Forward f = net.forward(x);
-  std::vector<double> p = Net::softmax(f.logits, legal);
+  ForwardT<double> f = net.forward(x);
+  std::vector<double> p = Netd::softmax(f.logits, legal);
   double lp = 0;
   for (size_t j = 0; j < pi.size(); j++) if (legal[j] && pi[j] > 0) lp -= pi[j] * std::log(std::max(1e-12, p[j]));
   return 0.5 * (f.v - z) * (f.v - z) + cPol * lp;
 }
 
 int main() {
-  // 1) gradient check on a 2-hidden-layer net: analytic grad (θ -= lr·grad with lr=1) vs central finite diff.
+  // 1) gradient check on a 2-hidden-layer net (din: 5->6->4). Weights flat: W[l][i*din + k].
   {
-    Net net(5, {6, 4}, 3, /*seedW=*/0.5);
+    Netd net(5, {6, 4}, 3, /*seedW=*/0.5);
     std::vector<double> x = {0.4, -0.7, 0.1, 0.9, -0.3};
     double z = 0.3;
     std::vector<bool> legal = {true, true, false};
     std::vector<double> pi = {0.6, 0.4, 0.0};
-
-    // a handful of parameters across layers + both heads
     struct P { double* p; const char* name; };
     std::vector<P> params = {
-      {&net.W[0][2][3], "W[0][2][3]"}, {&net.b[0][1], "b[0][1]"},
-      {&net.W[1][3][2], "W[1][3][2]"}, {&net.b[1][2], "b[1][2]"},
-      {&net.Wv[3], "Wv[3]"}, {&net.Wp[0][1], "Wp[0][1]"}, {&net.bp[2], "bp[2]"},
+      {&net.W[0][2 * 5 + 3], "W[0][2][3]"}, {&net.b[0][1], "b[0][1]"},
+      {&net.W[1][3 * 6 + 2], "W[1][3][2]"}, {&net.b[1][2], "b[1][2]"},
+      {&net.Wv[3], "Wv[3]"}, {&net.Wp[0 * net.nHid + 1], "Wp[0][1]"}, {&net.bp[2], "bp[2]"},
     };
     const double e = 1e-5;
     std::vector<double> numG, before;
@@ -38,22 +38,20 @@ int main() {
       *pr.p = v0 + e; double lp = loss(net, x, z, pi, legal);
       *pr.p = v0 - e; double lm = loss(net, x, z, pi, legal);
       *pr.p = v0;
-      numG.push_back((lp - lm) / (2 * e));
-      before.push_back(v0);
+      numG.push_back((lp - lm) / (2 * e)); before.push_back(v0);
     }
-    double lr = 1.0;
-    net.trainStep(x, z, pi, legal, lr);
+    net.trainStep(x, z, pi, legal, 1.0);
     for (size_t i = 0; i < params.size(); i++) {
-      double analytic = (before[i] - *params[i].p) / lr; // trainStep did θ -= lr·grad
+      double analytic = (before[i] - *params[i].p) / 1.0;
       bool good = std::fabs(analytic - numG[i]) < 1e-5;
       check(good, params[i].name);
       if (!good) std::printf("    %s: analytic %.6f vs numeric %.6f\n", params[i].name, analytic, numG[i]);
     }
   }
 
-  // 2) toy learning: can a small ReLU net fit a known value+policy mapping from random init?
+  // 2) toy learning from random init
   {
-    Net net(4, {16, 16}, 3, 0.0, /*seed=*/12345);
+    Netd net(4, {16, 16}, 3, 0.0, 12345);
     std::vector<bool> legal = {true, true, true};
     Rng rng(999);
     auto sample = [&](std::vector<double>& x, double& z, std::vector<double>& pi, int& best) {
@@ -69,8 +67,8 @@ int main() {
     for (int i = 0; i < 1000; i++) {
       sample(x, z, pi, best);
       post += loss(net, x, z, pi, legal);
-      Forward f = net.forward(x);
-      auto p = Net::softmax(f.logits, legal);
+      ForwardT<double> f = net.forward(x);
+      auto p = Netd::softmax(f.logits, legal);
       int arg = 0; for (int j = 1; j < 3; j++) if (p[j] > p[arg]) arg = j;
       if (arg == best) correct++;
     }

@@ -21,11 +21,11 @@ int main() {
     Net net2 = netFromJson(json::parse(wire));
 
     Rng rng(42);
-    std::vector<double> x(INPUT_DIM);
+    std::vector<float> x(INPUT_DIM);
     for (auto& v : x) v = rng.next() * 2 - 1;
     Forward a = net.forward(x), b = net2.forward(x);
     double dv = std::fabs(a.v - b.v), dl = 0;
-    for (int j = 0; j < NPOL; j++) dl = std::max(dl, std::fabs(a.logits[j] - b.logits[j]));
+    for (int j = 0; j < NPOL; j++) dl = std::max(dl, (double)std::fabs(a.logits[j] - b.logits[j]));
     check(dv < 1e-12 && dl < 1e-12, "net survives json round-trip bit-for-bit (forward identical)");
   }
 
@@ -44,7 +44,7 @@ int main() {
     check(r.z == s.z, "sample z survives");
     bool legalOk = true; for (int j = 0; j < NPOL; j++) if (r.legal[j] != s.legal[j]) legalOk = false;
     check(legalOk, "sample legal mask survives");
-    double dx = 0; for (size_t i = 0; i < s.x.size(); i++) dx = std::max(dx, std::fabs(r.x[i] - s.x[i]));
+    double dx = 0; for (size_t i = 0; i < s.x.size(); i++) dx = std::max(dx, (double)std::fabs(r.x[i] - s.x[i]));
     check(dx <= 0.001 + 1e-12, "sample x survives within the 3dp wire rounding");
   }
 

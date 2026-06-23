@@ -65,7 +65,7 @@ int main() {
       if ((int)s.x.size() != INPUT_DIM) badX++;
       double sum = 0; bool onlyLegal = true;
       for (int j = 0; j < NPOL; j++) { sum += s.pi[j]; if (s.pi[j] > 0 && !s.legal[j]) onlyLegal = false; }
-      if (std::fabs(sum - 1.0) > 1e-9 || !onlyLegal) badPi++;
+      if (std::fabs(sum - 1.0) > 1e-4 || !onlyLegal) badPi++;
       if (s.z != 1.0 && s.z != -1.0) badZ++;
       if (s.z == 1.0) winN++; else lossN++;
     }
@@ -77,7 +77,7 @@ int main() {
     // a quick SGD pass: the net should fit its own targets (training loss drops)
     auto avgLoss = [&](Net& n) {
       double L = 0; for (auto& s : data) { Forward f = n.forward(s.x); auto p = Net::softmax(f.logits, s.legal);
-        double lp = 0; for (int j = 0; j < NPOL; j++) if (s.legal[j] && s.pi[j] > 0) lp -= s.pi[j] * std::log(std::max(1e-12, p[j]));
+        double lp = 0; for (int j = 0; j < NPOL; j++) if (s.legal[j] && s.pi[j] > 0) lp -= s.pi[j] * std::log(std::max(1e-12, (double)p[j]));
         L += 0.5 * (f.v - s.z) * (f.v - s.z) + lp; }
       return L / data.size();
     };

@@ -18,14 +18,14 @@ namespace cz {
 // the game terminated cleanly. `dealRng` advances the real deals; `searchRng` drives MCTS only.
 inline bool playOneGame(CribGame& game, const Net& net, int sims, double cPuct,
                         Rng& dealRng, Rng& searchRng, Mcts& mcts, std::vector<Sample>& out) {
-  struct Step { std::vector<double> x, pi; std::vector<bool> legal; int player; };
+  struct Step { std::vector<float> x, pi; std::vector<bool> legal; int player; };
   std::vector<Step> traj;
   int guard = 0;
   while (!game.done && guard++ < 20000) {
     int player = game.toAct;
     SearchResult r = mcts.search(game, net, sims, cPuct, searchRng);
     auto legal = game.legalSlots();
-    std::vector<double> pi(r.policy.begin(), r.policy.end());
+    std::vector<float> pi(r.policy.begin(), r.policy.end());
     traj.push_back({game.encode(player), std::move(pi), std::move(legal), player});
     game.step(r.move, dealRng);
   }

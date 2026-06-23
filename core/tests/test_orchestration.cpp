@@ -136,7 +136,7 @@ int main() {
   check(pulled.has_value(), "pullNet returns the pushed net");
   if (pulled) {
     Net back = netFromJson(*pulled);
-    Rng rr(7); std::vector<double> x(INPUT_DIM); for (auto& v : x) v = rr.next();
+    Rng rr(7); std::vector<float> x(INPUT_DIM); for (auto& v : x) v = rr.next();
     double d = std::fabs(net.forward(x).v - back.forward(x).v);
     check(d < 1e-9, "pushed net round-trips through GitHub bit-for-bit");
   }
