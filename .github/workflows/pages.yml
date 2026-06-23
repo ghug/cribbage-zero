@@ -1,8 +1,8 @@
 name: Deploy dev tools to GitHub Pages
 
-# Publishes the dev-only browser tools (dev.html hub, local.html / worker.html trainers, eval.html) to
-# GitHub Pages so they can be run online. Unlike "Deploy from a branch", this builds the engine bundle
-# (worker/az_bundle.js is gitignored) and uploads only the pages + the bundle + src/winprob.js.
+# Publishes the dev-only browser tools (dev.html hub, worker.html monitor, eval.html) to GitHub Pages so
+# they can be run online. Unlike "Deploy from a branch", this builds the engine bundle
+# (worker/az_bundle.js is gitignored, used by eval.html) and uploads only the pages + the bundle + src/winprob.js.
 # Serves the `dev` branch. Pages must be enabled in repo settings (Source: GitHub Actions).
 
 on:
@@ -48,15 +48,15 @@ jobs:
           node-version: "20"
 
       - name: Build the engine bundle
-        run: ./engine/build-bundle.sh   # -> worker/az_bundle.js (used by local.html / worker.html / eval.html)
+        run: ./engine/build-bundle.sh   # -> worker/az_bundle.js (used by eval.html)
 
       - name: Assemble site
         run: |
           mkdir -p _site/worker _site/src
           cp index.html dev.html eval.html refresh-trainer.html release-trainer.html snapshot.html progress.html local.html worker.html version.js chrome.js netstore.js _site/
-          cp worker/az_bundle.js worker/az_worker_thread.js _site/worker/   # bundle + the worker.html self-play thread
+          cp worker/az_bundle.js _site/worker/   # engine bundle (eval.html)
           cp src/winprob.js _site/src/
-          touch _site/.nojekyll   # serve files verbatim (root index.html routes to local/worker mode)
+          touch _site/.nojekyll   # serve files verbatim (root index.html routes to dev.html)
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

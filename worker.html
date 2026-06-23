@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Cribbage Zero — Worker</title>
+<title>Cribbage Zero — Monitor</title>
 <style>
   :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --red:#c8412b; --gold:#d6bc7a; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -13,232 +13,112 @@
   h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 18px; }
   label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
   input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
-  .row { display:flex; gap:10px; } .row > div { flex:1; }
-  .btns { display:flex; gap:10px; margin:18px 0 8px; }
-  button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
-  #start { background:var(--good); color:#10331f; } #wind { background:var(--gold); color:#241f0e; } #stop { background:var(--red); color:#fff; }
-  button:disabled { opacity:.4; }
-  .counter { text-align:center; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 8px; }
-  .counter b { display:block; font-size:46px; color:var(--gold); line-height:1; } .counter span { color:var(--mut); font-size:13px; }
-  #progress { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:2px 0 4px; }
-  #stats { text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-bottom:12px; }
-  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px;
-         padding:10px; height:170px; overflow:auto; white-space:pre-wrap; }
-  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+  .btns { display:flex; gap:10px; margin:16px 0 8px; }
+  button { flex:1; padding:13px; border-radius:12px; border:0; font:600 15px inherit; cursor:pointer; background:var(--good); color:#10331f; }
+  button:disabled { opacity:.5; }
+  .card { background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:16px; margin:12px 0; }
+  .stat { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px solid rgba(255,255,255,.06); }
+  .stat:last-child { border-bottom:0; }
+  .stat .k { color:var(--mut); font-size:13px; } .stat .v { font:600 16px ui-monospace,Menlo,monospace; color:var(--ink); text-align:right; }
+  .v.big { color:var(--gold); font-size:22px; }
+  .v.good { color:var(--good); } .v.dim { color:var(--mut); font-weight:400; } .v.bad { color:var(--red); }
+  #updated { text-align:center; color:var(--mut); font:11.5px ui-monospace,Menlo,monospace; min-height:14px; margin:6px 0 0; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:16px; }
+  .note a { color:var(--gold); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>♣ Cribbage Zero — Worker</h1>
-  <p class="sub">Self-plays as an <b>actor</b> and uploads samples to the learner via the Cloudflare data bus. The net is read from GitHub; your token stays on this device.</p>
-  <p style="margin:-10px 0 14px;"><span id="tomode" style="color:var(--mut);font-size:12px;text-decoration:underline;cursor:pointer;">⇄ Use on-device trainer mode instead</span></p>
+  <h1>♣ Cribbage Zero — Monitor</h1>
+  <p class="sub">Read-only view of the live training run: the net's progress on GitHub, the data-bus queue
+  depth, and whether a learner is alive. Self-play now runs in the native <b>cz_pc</b> engine, not the browser.</p>
 
   <label for="api">Data-bus API URL</label>
   <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.gabrielhug.workers.dev" autocapitalize="off" autocorrect="off" />
-  <label for="tok">Worker token</label>
-  <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember worker token on this device (otherwise in-memory only)</label>
-  <div class="row">
-    <div><label for="upload">Upload every (min)</label><input id="upload" type="number" min="0.05" step="0.5" value="5" /></div>
-    <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="50" /></div>
-    <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
-  </div>
+  <label for="tok">Bus token <span style="opacity:.7">(worker token shows the queue; trainer token also shows the lease)</span></label>
+  <input id="tok" type="password" placeholder="paste a bus token (optional)" autocapitalize="off" autocorrect="off" />
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember bus token on this device (otherwise in-memory only)</label>
 
-  <div class="btns">
-    <button id="start">Start</button>
-    <button id="wind" disabled>Wind down</button>
-    <button id="stop" disabled>Stop</button>
-  </div>
+  <div class="btns"><button id="refresh">Refresh now</button></div>
 
-  <div class="counter"><b id="count">0</b><span>uploads pushed</span></div>
-  <div id="progress"></div>
-  <div id="stats"></div>
-  <div id="log"></div>
-  <p class="note">This device is an <b>actor</b>: it self-plays against the learner's net (read from the public
-  GitHub <b>net</b> branch) and uploads <b>every</b> sample it produces (in chunks) to the data bus. The screen
-  is kept awake while running. The token only lets this device append self-play — it can't read or change anyone
-  else's data; the net is read from GitHub with your saved GitHub token if you have one (else anonymously).</p>
+  <div class="card">
+    <div class="stat"><span class="k">Net — games trained</span><span class="v big" id="games">—</span></div>
+    <div class="stat"><span class="k">Net — iteration</span><span class="v" id="iter">—</span></div>
+    <div class="stat"><span class="k">Bus — pending shards</span><span class="v" id="shards">—</span></div>
+    <div class="stat"><span class="k">Learner</span><span class="v" id="lease">—</span></div>
+  </div>
+  <div id="updated"></div>
+
+  <p class="note">Everything here is read-only — no token is required to see the net's games/iter (the
+  <b>net</b> branch is public). A <b>worker</b> bus token reveals the queue depth; a <b>trainer</b> token also
+  reveals the single-writer lease (is a learner running, and which one). To contribute self-play, run the
+  <b>cz_pc</b> engine on a PC — see <a href="dev.html">the tools hub</a>. The page refreshes every 15s.</p>
   <p class="note" style="margin-top:10px">Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 
 <script src="version.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
-<script>document.getElementById("ver").textContent = window.CZ_VERSION;</script>
 <script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
-<script src="worker/az_bundle.js"></script><!-- provides makeSync() on the main thread -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var threads = [], running = false, sync = null, pushed = 0, curIter = -1, workerId = null;
-  var wakeLock = null, sampleCount = 0, startTime = 0;
-  var curNet = null, curSims = 20, curCpuct = 1.5, flushMs = 300000, mainMode = false, gotBatch = false;
-  var winding = false, inFlight = 0;
-  var MAX_SAMPLES = 1500;                          // cap shard to ~0.4 MB (well under D1's value-size limit)
-  var rng = (typeof makeRng === "function") ? makeRng((Date.now() ^ 0x5bd1e995) >>> 0) : null;
-  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
-  function r3(v) { return Math.round(v * 1e3) / 1e3; }
-  function shrink(s) { return s.map(function (x) { return { x: x.x.map(r3), pi: x.pi.map(r3), legal: x.legal, z: r3(x.z) }; }); }
+  $("ver").textContent = window.CZ_VERSION;
 
-  function log(msg) {
-    var el = $("log"), t = new Date().toLocaleTimeString();
-    el.textContent = "[" + t + "] " + msg + "\n" + el.textContent;
-    if (el.textContent.length > 8000) el.textContent = el.textContent.slice(0, 8000);
-  }
-  function render() { $("count").textContent = pushed; }
-  function updateButtons() { $("start").disabled = running; $("wind").disabled = !running || winding; $("stop").disabled = !running; }
-  function setRunning(on) { running = on; updateButtons(); }
-  function wid() { var w = localStorage.getItem("az_wid"); if (!w) { w = "dev-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("az_wid", w); } return w; }
-  function nThreads() { var v = parseInt($("threads").value, 10); return Math.max(1, Math.min(16, v || 1)); }
-
-  function renderProgress(batchSamples, batchMs) {
-    var el = $("progress");
-    if (!running) { el.textContent = ""; return; }
-    var pre = winding ? "winding down — " : "self-playing";
-    if (mainMode && typeof batchSamples === "number") el.textContent = pre + (winding ? "" : " —") + " " + batchSamples + " samples this interval · " + Math.round(batchMs / 1000) + "s";
-    else { var b = inFlight < 0 ? 0 : inFlight; el.textContent = (winding ? "winding down — " : "self-playing: ") + b + " batch" + (b === 1 ? "" : "es") + " in progress"; }
-  }
-  function showStats() {
-    var sps = sampleCount / Math.max(1, (Date.now() - startTime) / 1000);
-    $("stats").textContent = "trainer iter " + (curIter < 0 ? "?" : curIter) + " · ~" + sps.toFixed(1) + " samples/s";
-  }
-
-  // restore saved config
-  // token persistence is OPT-IN: only saved when "Remember" is checked, else in-memory (and any stored copy cleared)
-  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
+  // restore config (reuse the keys the old worker page wrote so settings carry over). Token persistence is
+  // OPT-IN: only saved when "Remember" is checked, else in-memory (and any stored copy is cleared).
   $("api").value = localStorage.getItem("az_api") || "https://cribbage-zero-bus.gabrielhug.workers.dev";
   var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
+  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
   $("remember").addEventListener("change", persistToken);
-  if (localStorage.getItem("az_upload")) $("upload").value = localStorage.getItem("az_upload");
-  if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
-  $("threads").value = localStorage.getItem("az_threads") || Math.min((navigator.hardwareConcurrency || 2), 4);
 
-  async function acquireWake() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
-  function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
-  document.addEventListener("visibilitychange", function () { if (running && document.visibilityState === "visible" && !wakeLock) acquireWake(); });
+  function set(id, text, cls) { var el = $(id); el.textContent = text; el.className = "v" + (cls ? " " + cls : ""); }
+  function busBase() { return ($("api").value.trim() || "").replace(/\/+$/, ""); }
 
-  // The net lives on the public GitHub `net` branch (the learner pushes it), fetched via the RAW media type
-  // (it's multi-MB, past the 1MB JSON-inline cap). We read it with the on-device trainer's GitHub token if one
-  // is saved here (shared "cz_token" key — authenticated reads get the 5000/hr API limit vs 60/hr anonymous,
-  // and can reach a private net); otherwise anonymously.
-  var netRepo = "ghug/cribbage-zero", lastNetCheck = 0;
-  async function ghRaw(file) {
-    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
-    var tk = CZ.token(); if (tk) H.Authorization = "Bearer " + tk;
-    var res = await fetch("https://api.github.com/repos/" + netRepo + "/contents/checkpoints/" + file + "?ref=net",
-      { headers: H, cache: "no-store" });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(file + " -> " + res.status);
-    return JSON.parse(await res.text());
+  async function busGet(path, token) {
+    var H = {}; if (token) H.Authorization = "Bearer " + token;
+    var res = await fetch(busBase() + path, { headers: H, cache: "no-store" });
+    return { status: res.status, body: await res.json().catch(function () { return null; }) };
   }
-  async function pullCheckpoint() {
-    var r = await CZNet.latest(netRepo, CZ.token());   // shared last-cloud-net cache (reused across pages, no re-download)
-    if (r && r.obj) { var net = r.obj; curIter = r.iter || 0; curNet = netFromObj(net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: net }); }); log("updated to net iter " + curIter + (r.fromCache ? " (cached)" : "")); return net; }
-    return null;
-  }
-  async function maybeRefreshNet() {            // poll the tiny info file at most every 5 min; refetch the net only if it advanced
-    if (Date.now() - lastNetCheck < 300000) return;
-    lastNetCheck = Date.now();
-    try { var info = await CZNet.info(netRepo, CZ.token()); if (info && (info.iter || 0) > curIter) await pullCheckpoint(); } catch (e) {}
-  }
-  async function flush(samples) {
-    if (!samples || !samples.length) return;
+
+  async function refreshNet() {
+    set("games", "…", "big dim"); set("iter", "…", "dim");
     try {
-      await sync.putShard(shrink(samples), workerId);   // round floats to shrink the payload
-      pushed++; sampleCount += samples.length; render();
-      await maybeRefreshNet();
-      showStats();
-    } catch (err) { log("upload failed: " + err.message + " — will retry next batch"); }
+      var meta = await CZNet.info(CZ.repo(), CZ.token());   // {games, iter} | null (token-less OK on the public repo)
+      if (meta) { set("games", (meta.games || 0).toLocaleString(), "big"); set("iter", String(meta.iter || 0)); }
+      else { set("games", "no net yet", "big dim"); set("iter", "—", "dim"); }
+    } catch (e) { set("games", "error", "big bad"); set("iter", e.message, "dim"); }
   }
 
-  // main-thread self-play (the APK path): keep EVERY sample. Buffer self-play, upload full MAX_SAMPLES
-  // chunks as they fill (D1 caps a shard's size), and flush the remainder each interval. No data dropped.
-  async function mainLoop() {
-    var buf = [], seen = 0, t0 = Date.now();
-    inFlight = 1;
-    while (running && !winding) {
-      var g = selfPlay(curNet, curSims, curCpuct, rng);
-      buf = buf.concat(g); seen += g.length;
-      while (buf.length >= MAX_SAMPLES) await flush(buf.splice(0, MAX_SAMPLES));   // upload each full chunk
-      if (Date.now() - t0 >= flushMs) { if (buf.length) await flush(buf.splice(0)); seen = 0; t0 = Date.now(); }
-      renderProgress(seen, Date.now() - t0);
-      await sleep(0);
-    }
-    inFlight = 0;
-    if (buf.length && running) await flush(buf.splice(0));   // wind-down: upload the remainder too
-    if (running && winding) finalizeStop();
+  async function refreshBus() {
+    var api = busBase(), token = $("tok").value.trim();
+    if (!api) { set("shards", "set the bus URL", "dim"); set("lease", "set the bus URL", "dim"); return; }
+    if (!token) { set("shards", "enter a bus token", "dim"); set("lease", "enter a bus token", "dim"); return; }
+    persistToken(); localStorage.setItem("az_api", api);
+    // queue depth (/stats — worker OR trainer token)
+    try {
+      var r = await busGet("/stats", token);
+      if (r.status === 200 && r.body) set("shards", (r.body.pendingShards || 0).toLocaleString());
+      else if (r.status === 401) set("shards", "unauthorized token", "bad");
+      else set("shards", "error " + r.status, "bad");
+    } catch (e) { set("shards", "unreachable", "bad"); }
+    // learner lease (/lease — TRAINER token only; 403 on a worker token)
+    try {
+      var l = await busGet("/lease", token);
+      if (l.status === 200 && l.body) {
+        var holder = l.body.holder || "", exp = l.body.expires_at || 0, now = l.body.now || Date.now();
+        if (holder && exp > now) set("lease", "alive · " + holder + " · " + Math.round((exp - now) / 1000) + "s left", "good");
+        else set("lease", "no active learner", "dim");
+      } else if (l.status === 403) set("lease", "n/a — needs trainer token", "dim");
+      else set("lease", "error " + l.status, "bad");
+    } catch (e) { set("lease", "unreachable", "bad"); }
   }
 
-  function onThreadMsg(e, w) {
-    if (!e.data || !running) return;
-    if (e.data.type === "batch") { gotBatch = true; flush(e.data.samples); }
-    else if (e.data.type === "wound") { inFlight--; renderProgress(); if (winding && inFlight <= 0) finalizeStop(); }
-  }
-  function onWorkerFail() {
-    if (mainMode || gotBatch) return;
-    mainMode = true;
-    log("No multi-threading available. Self-playing on the main thread.");
-    threads.forEach(function (w) { try { w.terminate(); } catch (e) {} }); threads = [];
-    inFlight = 0;
-    if (!rng && typeof makeRng === "function") rng = makeRng((Date.now() ^ 0x5bd1e995) >>> 0);
-    mainLoop();
-  }
+  function stamp() { $("updated").textContent = "updated " + new Date().toLocaleTimeString(); }
+  async function refreshAll() { await Promise.all([refreshNet(), refreshBus()]); stamp(); }
 
-  async function start() {
-    var apiUrl = $("api").value.trim(), token = $("tok").value.trim();
-    netRepo = CZ.repo();
-    if (!apiUrl || !token) { log("enter the bus URL and your worker token first"); return; }
-    var upMin = parseFloat($("upload").value) || 5, sims = parseInt($("sims").value, 10) || 20, n = nThreads();
-    flushMs = Math.max(2000, upMin * 60000);
-    localStorage.setItem("az_api", apiUrl); persistToken(); CZ.persist();
-    localStorage.setItem("az_upload", upMin); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
-    if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
-    workerId = wid();
-    sync = makeSync({ apiUrl: apiUrl, token: token, workerId: workerId });
-    pushed = 0; sampleCount = 0; startTime = Date.now(); curSims = sims; render(); setRunning(true);
-    log("starting as " + workerId + " — upload every " + upMin + " min");
-
-    var net = null;
-    try { net = await pullCheckpoint(); } catch (e) { log("error reading the net from GitHub: " + e.message); setRunning(false); return; }
-    while (running && !net) { log("waiting for the learner's first net on GitHub (" + netRepo + ")…"); await sleep(5000); try { net = await pullCheckpoint(); } catch (e) { log("error: " + e.message); } }
-    if (!running) return;
-    lastNetCheck = Date.now(); showStats();
-    log("got net iter " + curIter + " from GitHub — self-playing");
-    acquireWake();
-    gotBatch = false; mainMode = false; winding = false; inFlight = 0;
-    for (var i = 0; i < n; i++) {
-      try {
-        var w = new Worker("worker/az_worker_thread.js");
-        w.onmessage = (function (ww) { return function (e) { onThreadMsg(e, ww); }; })(w);
-        w.onerror = function () { onWorkerFail(); };       // file:// (APK) → main-thread fallback
-        w.postMessage({ type: "ckpt", obj: net });
-        w.postMessage({ type: "start", sims: sims, cPuct: curCpuct, flushMs: flushMs, maxSamples: MAX_SAMPLES });
-        threads.push(w); inFlight++;
-      } catch (e2) { onWorkerFail(); break; }
-    }
-    renderProgress();
-  }
-
-  function finalizeStop() {
-    if (!running) return;
-    running = false; winding = false; inFlight = 0;
-    threads.forEach(function (w) { try { w.postMessage({ type: "stop" }); w.terminate(); } catch (e) {} });
-    threads = [];
-    releaseWake(); updateButtons(); renderProgress();
-    log("stopped");
-  }
-  function windDown() {                              // finish + upload in-flight batch(es), launch no more, then stop
-    if (!running || winding) return;
-    winding = true; updateButtons(); renderProgress();
-    threads.forEach(function (w) { try { w.postMessage({ type: "wind" }); } catch (e) {} });
-    log("winding down — finishing the current batch, then stopping");
-    if (!mainMode && inFlight <= 0) finalizeStop();
-  }
-  function stop() { finalizeStop(); }                // hard stop (discards the in-flight batch)
-
-  $("start").addEventListener("click", start);
-  $("wind").addEventListener("click", windDown);
-  $("stop").addEventListener("click", stop);
-  $("tomode").addEventListener("click", function () { if (running) { log("stop first"); return; } localStorage.setItem("cz_mode", "trainer"); location.href = "local.html"; });
+  $("refresh").addEventListener("click", refreshAll);
+  refreshAll();
+  setInterval(refreshAll, 15000);
 })();
 </script>
 </body>

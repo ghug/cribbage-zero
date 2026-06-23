@@ -29,8 +29,7 @@
   <h1>♣ Cribbage Zero</h1>
 
   <h2>Browser tools</h2>
-  <a class="card" href="local.html"><b>On-device trainer →</b><span>local.html — self-plays + trains on this device, pushes the net to GitHub.</span></a>
-  <a class="card" href="worker.html"><b>Cloudflare worker mode (actor) →</b><span>worker.html — this device self-plays as an actor: reads the net from GitHub, uploads sample shards to the data bus for the learner.</span></a>
+  <a class="card" href="worker.html"><b>Training monitor →</b><span>worker.html — read-only: live net progress (games/iter), data-bus queue depth, and learner-lease status. Self-play runs in the native cz_pc engine, not the browser.</span></a>
   <a class="card" href="eval.html"><b>Evaluate the net →</b><span>eval.html — 10000 balanced games vs random + vs hard; recording to the progress branch is a separate manual approval.</span></a>
   <a class="card" href="progress.html"><b>View progress →</b><span>progress.html — graphs net win% over games trained from the progress branch.</span></a>
   <a class="card" href="snapshot.html"><b>Net snapshots &amp; rollback →</b><span>snapshot.html — archive the net to the net-archive branch, or roll back to a saved snapshot.</span></a>
