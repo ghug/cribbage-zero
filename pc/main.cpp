@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LEASE_TTL_MS.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LEASE_TTL_MS CZ_MOMENTUM.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -130,6 +130,7 @@ int main(int argc, char** argv) {
     else { usingLease = true; log("acquired the learner lease"); }
   }
 
+  net.setMomentum(envf("CZ_MOMENTUM", 0.9));   // SGD momentum (learner only; allocates velocity buffers)
   ReplayBuffer buf(bufCap);
   long pushAccum = 0;
   bool lostLease = false;

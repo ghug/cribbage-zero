@@ -29,6 +29,19 @@ public:
   std::vector<T> Wp;                       // policy head: flat nPol*nHid
   std::vector<T> bp;                       // nPol
 
+  // SGD momentum (opt-in; default 0 = plain SGD so the gradient check stays exact). Velocity buffers mirror
+  // the weights and are lazily allocated by setMomentum(>0) — actors that never train never allocate them.
+  double momentum_ = 0.0;
+  std::vector<std::vector<T>> vW, vb; std::vector<T> vWv; T vbv = 0; std::vector<T> vWp, vbp;
+  void setMomentum(double m) {
+    momentum_ = m;
+    if (m > 0 && vW.empty()) {
+      vW.resize(W.size()); for (size_t l = 0; l < W.size(); l++) vW[l].assign(W[l].size(), T(0));
+      vb.resize(b.size()); for (size_t l = 0; l < b.size(); l++) vb[l].assign(b[l].size(), T(0));
+      vWv.assign(Wv.size(), T(0)); vbv = 0; vWp.assign(Wp.size(), T(0)); vbp.assign(bp.size(), T(0));
+    }
+  }
+
   NetT() : nIn(0), nPol(0), nHid(0) {}
 
   // seedW>0 → U(-seedW,seedW) (gradient check); else He-uniform via rng.
@@ -141,13 +154,21 @@ public:
       for (int j = 0; j < nPol; j++) if (legal[j]) s += dlog[j] * (double)Wp[(size_t)j * nHid + i];
       dA[i] = s;
     }
-    // update heads
-    bv -= (T)(lr * dzv);
-    for (int i = 0; i < nHid; i++) Wv[i] -= (T)(lr * dzv * (double)h[i]);
+    // update heads (with SGD momentum when momentum_ > 0: v = mu*v + grad; theta -= lr*v)
+    double mu = momentum_;
+    if (mu > 0) { vbv = (T)(mu * vbv + dzv); bv -= (T)(lr * vbv); } else bv -= (T)(lr * dzv);
+    for (int i = 0; i < nHid; i++) {
+      double g = dzv * (double)h[i];
+      if (mu > 0) { vWv[i] = (T)(mu * vWv[i] + g); Wv[i] -= (T)(lr * vWv[i]); } else Wv[i] -= (T)(lr * g);
+    }
     for (int j = 0; j < nPol; j++) if (legal[j]) {
-      bp[j] -= (T)(lr * dlog[j]);
+      if (mu > 0) { vbp[j] = (T)(mu * vbp[j] + dlog[j]); bp[j] -= (T)(lr * vbp[j]); } else bp[j] -= (T)(lr * dlog[j]);
       T* Wj = Wp.data() + (size_t)j * nHid;
-      for (int i = 0; i < nHid; i++) Wj[i] -= (T)(lr * dlog[j] * (double)h[i]);
+      T* vWj = mu > 0 ? vWp.data() + (size_t)j * nHid : nullptr;
+      for (int i = 0; i < nHid; i++) {
+        double g = dlog[j] * (double)h[i];
+        if (mu > 0) { vWj[i] = (T)(mu * vWj[i] + g); Wj[i] -= (T)(lr * vWj[i]); } else Wj[i] -= (T)(lr * g);
+      }
     }
     // backprop hidden layers last→first
     for (int l = (int)W.size() - 1; l >= 0; l--) {
@@ -162,10 +183,17 @@ public:
         dIn.assign(din, 0.0);
         for (int i = 0; i < dout; i++) { double g = dZ[i]; if (g) { const T* ri = Wl + (size_t)i * din; for (int k = 0; k < din; k++) dIn[k] += g * (double)ri[k]; } }
       }
+      T* vWl = mu > 0 ? vW[l].data() : nullptr;
       for (int i = 0; i < dout; i++) {
         double g = dZ[i];
-        b[l][i] -= (T)(lr * g);
-        if (g) { T* ri = Wl + (size_t)i * din; for (int k = 0; k < din; k++) ri[k] -= (T)(lr * g * (double)aIn[k]); }
+        if (mu > 0) { vb[l][i] = (T)(mu * vb[l][i] + g); b[l][i] -= (T)(lr * vb[l][i]); } else b[l][i] -= (T)(lr * g);
+        T* ri = Wl + (size_t)i * din;
+        if (mu > 0) {                                    // momentum: apply carried velocity even on dead-ReLU rows
+          T* vri = vWl + (size_t)i * din;
+          for (int k = 0; k < din; k++) { double gw = g * (double)aIn[k]; vri[k] = (T)(mu * vri[k] + gw); ri[k] -= (T)(lr * vri[k]); }
+        } else if (g) {                                  // plain SGD: skip dead-ReLU rows (gradient is 0)
+          for (int k = 0; k < din; k++) ri[k] -= (T)(lr * g * (double)aIn[k]);
+        }
       }
       dA = std::move(dIn);
     }

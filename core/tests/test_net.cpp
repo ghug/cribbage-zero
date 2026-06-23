@@ -78,6 +78,35 @@ int main() {
     std::printf("  toy: loss %.3f -> %.3f, policy acc %.1f%%\n", pre, post, correct / 10.0);
   }
 
+  // 3) momentum smoke: SGD+momentum still converges (and doesn't blow up). Lower lr since momentum ~10x's
+  //    the effective step at mu=0.9.
+  {
+    Netd net(4, {16, 16}, 3, 0.0, 7);
+    net.setMomentum(0.9);
+    std::vector<bool> legal = {true, true, true};
+    Rng rng(321);
+    auto sample = [&](std::vector<double>& x, double& z, std::vector<double>& pi, int& best) {
+      x = {rng.next(), rng.next(), rng.next(), rng.next()};
+      z = std::tanh(2 * (x[0] - x[1]));
+      best = x[0] > x[2] ? (x[1] > 0.5 ? 0 : 1) : 2;
+      pi = {0, 0, 0}; pi[best] = 1;
+    };
+    std::vector<double> x, pi; double z; int best;
+    double pre = 0; for (int i = 0; i < 400; i++) { sample(x, z, pi, best); pre += loss(net, x, z, pi, legal); } pre /= 400;
+    for (int it = 0; it < 40000; it++) { sample(x, z, pi, best); net.trainStep(x, z, pi, legal, 0.005); }
+    double post = 0; int correct = 0;
+    for (int i = 0; i < 1000; i++) {
+      sample(x, z, pi, best);
+      post += loss(net, x, z, pi, legal);
+      ForwardT<double> f = net.forward(x); auto p = Netd::softmax(f.logits, legal);
+      int arg = 0; for (int j = 1; j < 3; j++) if (p[j] > p[arg]) arg = j; if (arg == best) correct++;
+    }
+    post /= 1000;
+    check(std::isfinite(post) && post < pre * 0.5, "momentum: toy training converges (no blow-up)");
+    check(correct / 1000.0 > 0.85, "momentum: toy policy accuracy > 85%");
+    std::printf("  momentum: loss %.3f -> %.3f, acc %.1f%%\n", pre, post, correct / 10.0);
+  }
+
   std::printf("\nnet test: %d passed, %d failed\n", ok, fail);
   return fail ? 1 : 0;
 }
