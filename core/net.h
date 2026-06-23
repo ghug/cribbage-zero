@@ -173,6 +173,14 @@ public:
     for (int j = 0; j < nPol; j++) if (legal[j] && pi[j] > 0) lp -= (double)pi[j] * std::log(std::max(1e-12, (double)p[j]));
     return 0.5 * dv * dv + cPol * lp;
   }
+
+  // decoupled L2 weight decay: theta *= f (= 1 - lr*lambda). Weights only, not biases.
+  void scaleWeights(double f) {
+    T ff = (T)f;
+    for (auto& w : W) for (auto& x : w) x *= ff;
+    for (auto& x : Wv) x *= ff;
+    for (auto& x : Wp) x *= ff;
+  }
 };
 
 using Net = NetT<float>;        // production: f32 flat weights (wide SIMD)

@@ -89,6 +89,38 @@ int main() {
     std::printf("  self-play: %zu samples (%d win / %d loss), loss %.3f -> %.3f\n", data.size(), winN, lossN, before, after);
   }
 
+  // 4) suit-symmetry augmentation: augmentSuits(encode(g)) must equal encode(suit-relabeled g) exactly.
+  {
+    Rng rng(2), deal(55);
+    CribGame g(deal, 0);
+    int guard = 0;
+    while ((g.phase == 0 || g.playedSuited.size() < 3) && !g.done && guard++ < 200) {
+      auto legal = g.legalSlots(); int ls[NPOL], n = 0;
+      for (int s = 0; s < NPOL; s++) if (legal[s]) ls[n++] = s;
+      if (n == 0) break;
+      g.step(ls[rng.below(n)], deal);
+    }
+    int sigma[4] = {2, 0, 3, 1};
+    int player = g.toAct < 0 ? 0 : g.toAct;
+    auto ea = g.encode(player); augmentSuits(ea, sigma);
+    CribGame r = g;   // relabel every card's suit by sigma
+    auto rs = [&](Card& c) { c.s = sigma[c.s]; };
+    for (auto& h : r.six) for (auto& c : h) rs(c);
+    for (auto& h : r.kept) for (auto& c : h) rs(c);
+    for (auto& c : r.crib) rs(c);
+    rs(r.starter); rs(r.cutCard);
+    for (auto& c : r.playedSuited) rs(c);
+    for (auto& h : r.pegHand) for (auto& c : h) rs(c);
+    auto er = r.encode(player);
+    bool match = ea.size() == er.size();
+    for (size_t i = 0; i < ea.size() && match; i++) if (std::fabs(ea[i] - er[i]) > 1e-9) match = false;
+    check(match, "augmentSuits(encode) == encode(suit-relabeled game)");
+    int inv[4]; for (int k = 0; k < 4; k++) inv[sigma[k]] = k;
+    auto e0 = g.encode(player); auto e1 = e0; augmentSuits(e1, sigma); augmentSuits(e1, inv);
+    bool rt = true; for (size_t i = 0; i < e0.size(); i++) if (std::fabs(e0[i] - e1[i]) > 1e-9) rt = false;
+    check(rt, "augmentSuits round-trips (sigma then inverse)");
+  }
+
   std::printf("\nselfplay test: %d passed, %d failed\n", ok, fail);
   return fail ? 1 : 0;
 }

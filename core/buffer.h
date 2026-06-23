@@ -19,19 +19,25 @@ public:
 private:
   std::deque<Sample> buf_;
   size_t cap_;
-  friend double trainReplay(Net&, ReplayBuffer&, int, int, double, Rng&);
+  friend double trainReplay(Net&, ReplayBuffer&, int, int, double, Rng&, double, bool);
 };
 
-// `steps` mini-batches of `batch` samples drawn at random WITH replacement
-inline double trainReplay(Net& net, ReplayBuffer& rb, int steps, int batch, double lr, Rng& rng) {
+// `steps` mini-batches of `batch` samples drawn at random WITH replacement. wd = L2 weight decay (applied
+// decoupled, once per mini-batch); augment = on-the-fly suit-symmetry augmentation of each sample's input.
+inline double trainReplay(Net& net, ReplayBuffer& rb, int steps, int batch, double lr, Rng& rng,
+                          double wd = 0.0, bool augment = false) {
   if (rb.buf_.empty()) return 0;
   double loss = 0; long n = 0;
-  for (int s = 0; s < steps; s++)
+  std::vector<float> xa;
+  for (int s = 0; s < steps; s++) {
     for (int b = 0; b < batch; b++) {
       const Sample& d = rb.buf_[rng.below((int)rb.buf_.size())];
-      loss += net.trainStep(d.x, d.z, d.pi, d.legal, lr);
+      if (augment) { xa = d.x; int sigma[4]; randomSuitPerm(sigma, rng); augmentSuits(xa, sigma); loss += net.trainStep(xa, d.z, d.pi, d.legal, lr); }
+      else loss += net.trainStep(d.x, d.z, d.pi, d.legal, lr);
       n++;
     }
+    if (wd > 0) net.scaleWeights(1.0 - lr * wd);   // decoupled L2, once per mini-batch
+  }
   return n ? loss / n : 0;
 }
 

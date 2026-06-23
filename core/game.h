@@ -236,4 +236,28 @@ public:
   }
 };
 
+// ---- suit-symmetry data augmentation ----
+// Cribbage is invariant under a CONSISTENT relabeling of the 4 suits (flush/nobs depend on suits MATCHING,
+// not their identity), and the policy is over hand POSITIONS — so a sample's pi/legal/z are unchanged and
+// only the suit one-hots in x are permuted. There are 14 card blocks in the encoding (6 own + 7 played + 1
+// starter), each a 4-dim suit one-hot right after that card's 13 rank dims. Applied on-the-fly during
+// training, this is up to 4! = 24x more data for free (the cribbage analogue of Go's board symmetries).
+inline const int* suitBlockOffsets() {
+  // own card c: c*17+13 (c=0..5); played card p: 107 + p*17 + 13 (p=0..6); starter: 230+13.
+  static const int off[14] = {13, 30, 47, 64, 81, 98, 120, 137, 154, 171, 188, 205, 222, 243};
+  return off;
+}
+inline void randomSuitPerm(int sigma[4], Rng& rng) {
+  sigma[0] = 0; sigma[1] = 1; sigma[2] = 2; sigma[3] = 3;
+  for (int i = 3; i > 0; i--) { int j = rng.below(i + 1); std::swap(sigma[i], sigma[j]); }
+}
+inline void augmentSuits(std::vector<float>& x, const int sigma[4]) {
+  const int* off = suitBlockOffsets();
+  for (int b = 0; b < 14; b++) {
+    int o = off[b];
+    float t[4] = {x[o], x[o + 1], x[o + 2], x[o + 3]};
+    for (int k = 0; k < 4; k++) x[o + sigma[k]] = t[k];   // move the one-hot from suit k to suit sigma[k]
+  }
+}
+
 } // namespace cz
