@@ -35,13 +35,15 @@ Smoke-test the routes/auth without Cloudflare: `node worker-api/test.js`.
 ## 2. Run the learner (the always-on PC)
 
 ```bash
+cmake -B core/build -S core && cmake --build core/build -j    # build cz_pc once (needs libcurl)
 CZ_TOKEN=<github-pat> \
 CZ_BUS_URL=https://cribbage-zero-bus.<you>.workers.dev \
 CZ_BUS_TOKEN=<TRAINER_TOKEN> \
-node engine/az_contribute.js
+core/build/cz_pc
 ```
-It self-plays, drains the actors' shards into the same replay buffer, trains, and pushes the net to GitHub
-every `CZ_PUSH_GAMES` games (+ on Ctrl-C). Omit `CZ_BUS_*` to run solo (no bus).
+The C++ `cz_pc` learner self-plays, drains the actors' shards into the same replay buffer, trains, and
+pushes the net to GitHub every `CZ_PUSH_GAMES` games (+ on Ctrl-C). Omit `CZ_BUS_*` to run solo (no bus).
+With a bus it also takes a **single-writer lease** so a second learner refuses to start.
 
 ## 3. Run actors (extra PCs / phones)
 
@@ -49,7 +51,7 @@ every `CZ_PUSH_GAMES` games (+ on Ctrl-C). Omit `CZ_BUS_*` to run solo (no bus).
 ```bash
 CZ_BUS_URL=https://cribbage-zero-bus.<you>.workers.dev \
 CZ_BUS_TOKEN=<WORKER_TOKEN> \
-node engine/az_contribute.js --actor
+core/build/cz_pc --actor
 ```
 
 **Phone actor** — open **`worker.html`** (in the app: ⌂ → ⇄ Cloudflare worker mode). Paste the bus URL +

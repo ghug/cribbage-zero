@@ -22,12 +22,13 @@ far (the full-game horizon + a CPU-only budget starve the bootstrap). The point 
   - GET /checkpoint  (play the latest net) <----                                     consume -> train -> publish
 ```
 
-- **Self-play core** (`engine/az_net.js`, `az_game.js`, `az_mcts.js`, `az_common.js`): the network
-  (value+policy MLP), the heads-up game environment, IS-MCTS+PUCT, and the self-play/train loop.
+- **Engine** (`core/` — C++): the network (value+policy MLP, forward + backprop/SGD), the heads-up game
+  environment, IS-MCTS+PUCT, self-play, and the replay buffer. The headless learner/actor CLI is
+  `pc/` → `cz_pc`. This is the single fastest engine and is being ported to Android via the NDK.
+- **Browser self-play core** (`engine/az_net.js`, `az_game.js`, `az_mcts.js`, `az_common.js`): the JS
+  port still bundled for the in-browser observer/trainer pages.
 - **Scoring** (`src/engine.js`): vendored cribbage scoring/pegging primitives (browser-safe, no deps).
-- *(coming)* `engine/az_sync.js` (Worker-API client), `worker.html` + Web Worker (the device worker GUI),
-  `engine/az_trainer.js --remote` + a scheduled GitHub Action, a `worker-api/` Cloudflare Worker, and an
-  optional Android worker APK.
+- *(coming)* the Android NDK actor (foreground service), and the browser pages reworked to observer-only.
 
 ## Run the core locally (single machine, no network)
 
@@ -40,19 +41,21 @@ node engine/az_mcts.js                      # self-tests (IS-MCTS mechanics)
 ## Contribute self-play from a computer
 
 `local.html` (the on-device trainer) pulls the shared net from the GitHub `net` branch, self-plays +
-trains, and pushes it back. `engine/az_contribute.js` is the **headless Node version of the same loop**,
-so a computer can carry the training far faster than a phone:
+trains, and pushes it back. **`cz_pc`** (the C++ CLI in `pc/`) is the **headless, multi-core version of
+the same loop** — the single fastest engine — so a computer can carry the training far faster than a
+phone (it superseded the retired Node `engine/az_contribute.js`):
 
 ```
-CZ_TOKEN=<github-pat> node engine/az_contribute.js [gamesPerIter=500] [sims=50] [pushEvery=5] [graphEvery=10000]
-node engine/az_contribute.js --dry          # pull + self-play + train, but NEVER push (safe smoke test)
+cmake -B core/build -S core && cmake --build core/build -j     # build cz_pc (needs libcurl)
+CZ_TOKEN=<github-pat> core/build/cz_pc [gamesPerRound=500] [sims=40]   # learner: pull + self-play + train + push
+core/build/cz_pc --dry          # local self-play bench, no network (add --fresh to start from random)
 ```
 
 - `CZ_TOKEN` — a GitHub PAT with **Contents: read+write** on the repo. `CZ_REPO` overrides the target
   (default `ghug/cribbage-zero`).
-- **Multi-core:** it fans self-play across your CPU cores automatically — the main thread owns the net
-  (training + sync) while N worker threads generate self-play in parallel. Override the worker count with
-  `CZ_WORKERS` (default: cores − 1).
+- **Multi-core:** it fans self-play across your CPU cores with a `std::thread` pool — the main thread owns
+  the net (training + sync) while N worker threads generate self-play in parallel. Override the worker
+  count with `CZ_WORKERS` (default: cores − 1).
 - It resumes from whatever the phone/another computer last pushed, and shares the **same** checkpoint
   format — so they're interchangeable.
 - **It won't throw out the cloud net.** It only starts fresh when the branch genuinely has *no* net (a

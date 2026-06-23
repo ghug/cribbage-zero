@@ -12,27 +12,33 @@ train → repeat — and pushes the net to GitHub for safekeeping. No Cloudflare
 - Needs a **fine-grained PAT with Contents: write** on the repo, pasted into the app (blank = train-only,
   no pushing). This is the simple path for 1–2 phones.
 
-**2. Cloudflare worker (optional).** The distributed bus below — many phones/PCs push self-play to a
-Cloudflare Worker + D1, and a scheduled GitHub Action trains. Use this only if you're fanning out across
-many contributors; otherwise mode 1 is simpler. The rest of this doc covers mode 2.
+**2. Cloudflare worker (optional).** The distributed bus below — many phones/PCs (**actors**) push
+self-play to a Cloudflare Worker + D1, and a single always-on PC (the **learner**, `cz_pc`) drains +
+trains. Use this only if you're fanning out across many contributors; otherwise mode 1 is simpler. The
+rest of this doc covers mode 2. See **`docs/BUS.md`** for the canonical, up-to-date bus walkthrough.
 
 ---
 
 ## Cloudflare worker mode (distributed)
 
-Workers (phone browsers, the APK, and PCs) generate self-play games and push them to a small
-**Cloudflare Worker + D1** data-bus; a single **scheduled GitHub Action trainer** consumes them, trains
-the net, and republishes the checkpoint. Workers pull the latest checkpoint to play against.
+Actors (phone browsers, the APK, and PCs) generate self-play games and push them to a small
+**Cloudflare Worker + D1** data-bus; a single **always-on PC learner** (`cz_pc`, the C++ CLI) drains them,
+trains the net, and republishes the checkpoint to the GitHub `net` branch. Actors pull the latest
+checkpoint to play against.
 
 ```
-  worker.html / APK / node az_worker --remote        worker-api (Cloudflare Worker)        trainer
-   - POST /shard  (self-play samples) ───────────────►  auth + CORS ──► D1 (SQLite)  ◄── GitHub Action (cron 30m):
-   - GET  /checkpoint (latest net) ◄──────────────────                                  consume → train → publish → prune
+  worker.html / APK / cz_pc --actor          worker-api (Cloudflare Worker)        learner (one PC)
+   - POST /shard  (self-play samples) ───────►  auth + CORS ──► D1 (SQLite)  ◄── cz_pc (drains the bus):
+   - GET net (GitHub raw) ◄───────────────────                                  consume → train → push net → prune
 ```
+
+The retired Node trainer ran as a scheduled GitHub Action; the engine is now a single C++ binary
+(`cz_pc`) run on an always-on PC, which takes a **single-writer lease** on the bus so only one learner
+can train at a time.
 
 Two bearer tokens: a **WORKER_TOKEN** handed to devices (may only append shards + read the checkpoint)
-and a **TRAINER_TOKEN** for the trainer (may also consume/publish/prune). A leaked worker token can't
-change anyone else's data.
+and a **TRAINER_TOKEN** for the learner (may also consume/prune + hold the lease). A leaked worker token
+can't change anyone else's data.
 
 ---
 
@@ -56,51 +62,53 @@ printf '%s' "$TRAINER_TOKEN" | wrangler secret put TRAINER_TOKEN
 wrangler deploy                                  # -> https://cribbage-zero-bus.<you>.workers.dev
 ```
 
-### b. GitHub (the trainer)
-In `ghug/cribbage-zero` → Settings → Secrets and variables → Actions, add:
-- `AZ_API_URL` = your Worker URL (e.g. `https://cribbage-zero-bus.<you>.workers.dev`)
-- `AZ_TRAINER_TOKEN` = the **trainer** token
-
-Enable Actions. The `Cribbage Zero trainer` workflow then runs every 30 min (or run it manually via
-*Actions → Run workflow*). On an empty bus it seeds from `engine/az_seed.json` (continuing iter 1445).
+### b. The learner (an always-on PC running `cz_pc`)
+There is no GitHub Action trainer any more — the learner is a C++ binary you run on a PC. It needs a
+GitHub PAT (Contents: read+write) to push the net, plus the bus URL + **TRAINER_TOKEN** to drain shards.
+See [§3](#3-the-learner) below.
 
 ---
 
-## 2. Run workers
+## 2. Run actors
 
 **Phone (browser or APK):** open `worker.html` (host it on Cloudflare Pages, or install the worker APK),
 paste the **API URL** + your **WORKER_TOKEN**, set games/sims, tap **Start**. Watch *iterations pushed*.
 
 **PC (uses all the speed of a real CPU):**
 ```bash
-AZ_API_URL=https://cribbage-zero-bus.<you>.workers.dev \
-AZ_WORKER_TOKEN=<worker token> \
-node engine/az_worker.js 0 120 20 40 --remote      # id chunkBatches gamesPerBatch sims
+cmake -B core/build -S core && cmake --build core/build -j     # build cz_pc once (needs libcurl)
+CZ_BUS_URL=https://cribbage-zero-bus.<you>.workers.dev \
+CZ_BUS_TOKEN=<worker token> \
+core/build/cz_pc --actor
 ```
-Run several (one per core) with different ids; or many machines — all contention-free.
+Run on as many machines as you like — all contention-free; each fans across its own cores.
 
 ---
 
-## 3. The trainer
+## 3. The learner
 
-Automatic via the GitHub Action. To run it yourself instead (or in addition — but keep it to **one**
-trainer at a time, the single checkpoint writer):
+One always-on PC runs the C++ `cz_pc` learner (the single net-writer; it takes a bus lease so a second
+learner refuses to start):
 ```bash
-AZ_API_URL=… AZ_TRAINER_TOKEN=<trainer token> \
-node engine/az_trainer.js --remote --once --seed engine/az_seed.json
+cmake -B core/build -S core && cmake --build core/build -j
+CZ_TOKEN=<github-pat> \
+CZ_BUS_URL=https://cribbage-zero-bus.<you>.workers.dev \
+CZ_BUS_TOKEN=<trainer token> \
+core/build/cz_pc
 ```
-Drop `--once` to keep it polling.
+It self-plays, drains the bus, trains a replay buffer, and pushes the net every `CZ_PUSH_GAMES` games
+(+ on Ctrl-C). Omit `CZ_BUS_*` to run solo (no bus). Full env knobs in `pc/main.cpp` / `docs/BUS.md`.
 
 ---
 
 ## 4. Build & host the worker page
 
-`worker.html` needs the engine bundle:
+`worker.html` (the in-browser actor) needs the JS engine bundle:
 ```bash
 bash engine/build-bundle.sh        # -> worker/az_bundle.js (generated)
 ```
 Then host `worker.html` + the `worker/` dir on any static host (Cloudflare Pages), or bundle them into
-the worker APK (`android/`).
+the worker APK (`android/`). (PC/headless actors use `cz_pc --actor` instead — no bundle needed.)
 
 ---
 
@@ -113,15 +121,15 @@ the worker APK (`android/`).
 
 ## 6. Local (single-machine) training — no network
 ```bash
-node engine/az_parallel.js 4 120 20 40     # 4 workers + trainer on local files, all cores
-node engine/az_net.js                      # core self-tests
+core/build/cz_pc --dry        # multi-core local self-play bench, no network (add --fresh to start fresh)
+ctest --test-dir core/build   # C++ core self-tests (scoring, net gradient check, MCTS, self-play)
 ```
 
 ## 7. Branches & releasing
 **All work lands on `dev`; `main` is the release snapshot.** Day-to-day commits push to `dev` and do
 **not** cut a release. Only on an explicit release request: merge `dev` → `main`, then publish a GitHub
-Release with a `vX.Y.Z` tag — the `Worker APK Release` workflow builds + signs the APK. The scheduled
-trainer and other Actions run from `main`, so changes go live only on release.
+Release with a `vX.Y.Z` tag — the `Worker APK Release` workflow builds + signs the APK. GitHub Pages
+publishes from `main`, so the observer pages go live only on release.
 
 **Bump the patch number only** (`0.1.0 → 0.1.1 → …`); do **not** advance the minor or major version
 unless explicitly asked. Bump `versionCode` by 1 and `versionName` to match in `android/app/build.gradle`,
