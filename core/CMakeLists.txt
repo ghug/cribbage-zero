@@ -22,3 +22,22 @@ add_test(NAME net COMMAND test_net)
 add_executable(test_selfplay tests/test_selfplay.cpp)
 target_include_directories(test_selfplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME selfplay COMMAND test_selfplay)
+
+# vendored single-header JSON (net / sample / info serialization)
+set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+
+add_executable(test_netio tests/test_netio.cpp)
+target_include_directories(test_netio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
+add_test(NAME netio COMMAND test_netio)
+
+# libcurl-backed HTTP (PC). Optional: only when libcurl is available.
+find_package(CURL)
+if(CURL_FOUND)
+  add_executable(test_http tests/test_http.cpp)
+  target_include_directories(test_http PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
+  target_link_libraries(test_http PRIVATE CURL::libcurl)
+  # NOT registered as a ctest — it needs network; run ./build/test_http manually.
+  message(STATUS "libcurl found: building test_http (real HTTP smoke)")
+else()
+  message(STATUS "libcurl NOT found: skipping the real-HTTP smoke (orchestration still tests via the mock)")
+endif()
