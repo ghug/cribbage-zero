@@ -160,8 +160,10 @@ private:
 
 public:
   // ----- net interface: fixed-length features from `player`'s information set (opponent cards hidden) -----
-  std::vector<float> encode(int player) const {
-    std::vector<float> fv;
+  std::vector<float> encode(int player) const { std::vector<float> fv; encodeInto(player, fv); return fv; }
+  // encode into a caller-provided buffer (reused across MCTS sims → no per-forward allocation)
+  void encodeInto(int player, std::vector<float>& fv) const {
+    fv.clear();
     fv.reserve(INPUT_DIM);
     int opp = 1 - player;
     auto pushCard = [&](const Card* c) {
@@ -214,7 +216,6 @@ public:
     // starter
     Card st = starter;
     pushCard(hasStarter ? &st : nullptr);
-    return fv;
   }
 
   // clone with the opponent's hidden cards resampled from the unseen pool (IS-MCTS determinization)

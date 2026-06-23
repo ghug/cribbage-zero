@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-add_compile_options(-O3 -march=native -funroll-loops -Wall -Wextra)
+add_compile_options(-O3 -march=native -funroll-loops -ffast-math -Wall -Wextra)
 
 enable_testing()
 

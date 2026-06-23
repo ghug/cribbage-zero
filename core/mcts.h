@@ -51,6 +51,8 @@ public:
 private:
   std::deque<MNode> arena_;            // stable addresses across push_back; one tree per search
   MNode* newNode() { arena_.emplace_back(); return &arena_.back(); }
+  // reused scratch (one Mcts per thread) → the hot path allocates nothing per sim
+  std::vector<float> enc_, sa_, sb_, logits_;
 
   double simulate(CribGame& g, MNode* node, int rootPlayer, const Net& net, double cPuct, Rng& rng) {
     node->N++;
@@ -58,11 +60,12 @@ private:
     if (!node->expanded) {                               // expand + net-evaluate (one new node per sim)
       int player = g.toAct;
       auto legal = g.legalSlots();
-      Forward f = net.forward(g.encode(player));
-      auto p = Net::softmax(f.logits, legal);
+      g.encodeInto(player, enc_);
+      float fv; net.infer(enc_, sa_, sb_, logits_, fv);  // inference-only forward, scratch buffers
+      auto p = Net::softmax(logits_, legal);
       for (int s = 0; s < NPOL; s++) node->P[s] = p[s];
       node->expanded = true;
-      double v = (player == rootPlayer) ? f.v : -f.v;    // → root perspective
+      double v = (player == rootPlayer) ? fv : -fv;      // → root perspective
       node->W += v;
       return v;
     }
