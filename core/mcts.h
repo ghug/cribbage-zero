@@ -49,8 +49,9 @@ public:
   // exploration noise (the SEARCH rng — kept separate from the real game's deal rng by the caller).
   // dirEps>0 mixes Dirichlet(dirAlpha) noise into the root prior (AlphaZero self-play exploration); 0 = off.
   SearchResult search(const CribGame& root, const Net& net, int nSims, double cPuct, Rng& rng,
-                      double dirEps = 0.0, double dirAlpha = 0.8) {
+                      double dirEps = 0.0, double dirAlpha = 0.8, double fpu = 0.0, double cBase = 0.0) {
     arena_.clear();
+    fpu_ = fpu; cBase_ = cBase;
     int rootPlayer = root.toAct;
     MNode* rnode = newNode();
     // pre-expand the root (its prior/legals depend only on the root player's own info → determinization-
@@ -88,6 +89,7 @@ private:
   MNode* newNode() { arena_.emplace_back(); return &arena_.back(); }
   // reused scratch (one Mcts per thread) → the hot path allocates nothing per sim
   std::vector<float> enc_, sa_, sb_, logits_;
+  double fpu_ = 0.0, cBase_ = 0.0;     // FPU reduction; c_puct log-scaling base (0 = off, set per search)
 
   double simulate(CribGame& g, MNode* node, int rootPlayer, const Net& net, double cPuct, Rng& rng) {
     node->N++;
@@ -108,13 +110,16 @@ private:
     auto legal = g.legalSlots();
     double sign = (player == rootPlayer) ? 1.0 : -1.0;
     double sqrtN = std::sqrt((double)std::max(1, node->N));
+    double cp = cPuct + (cBase_ > 0 ? std::log((node->N + cBase_ + 1.0) / cBase_) : 0.0);  // c_puct log-scaling
+    double parentVal = node->N > 0 ? sign * (node->W / node->N) : 0.0;                      // for FPU
     int best = -1; double bestSc = -1e300;
     for (int s = 0; s < NPOL; s++) {
       if (!legal[s]) continue;
       MNode* ch = node->child[s];
       int cN = ch ? ch->N : 0; double cW = ch ? ch->W : 0;
-      double q = cN > 0 ? sign * (cW / cN) : 0;          // Q from the node-player's perspective
-      double u = cPuct * node->P[s] * sqrtN / (1 + cN);
+      // Q from the node-player's perspective; unvisited children use FPU (parent value − reduction) not 0.
+      double q = cN > 0 ? sign * (cW / cN) : (parentVal - fpu_);
+      double u = cp * node->P[s] * sqrtN / (1 + cN);
       double sc = q + u;
       if (sc > bestSc) { bestSc = sc; best = s; }
     }

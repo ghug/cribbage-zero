@@ -11,7 +11,8 @@ namespace cz {
 
 inline long parallelSelfPlay(const Net& net, int sims, double cpuct, int nPairs, int nThreads,
                              uint32_t baseSeed, std::vector<Sample>& out,
-                             int tempMoves = 30, double dirEps = 0.25, double dirAlpha = 0.8) {
+                             int tempMoves = 30, double dirEps = 0.25, double dirAlpha = 0.8,
+                             double fpu = 0.25, double cBase = 19652.0) {
   std::mutex mtx;
   std::atomic<int> nextPair{0};
   std::atomic<long> games{0};
@@ -22,7 +23,7 @@ inline long parallelSelfPlay(const Net& net, int sims, double cpuct, int nPairs,
     int p;
     while ((p = nextPair.fetch_add(1)) < nPairs) {
       uint32_t pairSeed = baseSeed * 2654435761u + (uint32_t)p * 40503u + 1u;
-      if (playMatchPair(net, sims, cpuct, pairSeed, searchRng, mcts, local, tempMoves, dirEps, dirAlpha)) games += 2;
+      if (playMatchPair(net, sims, cpuct, pairSeed, searchRng, mcts, local, tempMoves, dirEps, dirAlpha, fpu, cBase)) games += 2;
     }
     std::lock_guard<std::mutex> lk(mtx);
     for (auto& s : local) out.push_back(std::move(s));

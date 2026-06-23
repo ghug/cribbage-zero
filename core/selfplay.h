@@ -18,13 +18,14 @@ namespace cz {
 // the game terminated cleanly. `dealRng` advances the real deals; `searchRng` drives MCTS only.
 inline bool playOneGame(CribGame& game, const Net& net, int sims, double cPuct,
                         Rng& dealRng, Rng& searchRng, Mcts& mcts, std::vector<Sample>& out,
-                        int tempMoves = 0, double dirEps = 0.0, double dirAlpha = 0.8) {
+                        int tempMoves = 0, double dirEps = 0.0, double dirAlpha = 0.8,
+                        double fpu = 0.0, double cBase = 0.0) {
   struct Step { std::vector<float> x, pi; std::vector<bool> legal; int player; };
   std::vector<Step> traj;
   int guard = 0, ply = 0;
   while (!game.done && guard++ < 20000) {
     int player = game.toAct;
-    SearchResult r = mcts.search(game, net, sims, cPuct, searchRng, dirEps, dirAlpha);
+    SearchResult r = mcts.search(game, net, sims, cPuct, searchRng, dirEps, dirAlpha, fpu, cBase);
     auto legal = game.legalSlots();
     std::vector<float> pi(r.policy.begin(), r.policy.end());
     traj.push_back({game.encode(player), std::move(pi), std::move(legal), player});
@@ -49,11 +50,12 @@ inline bool playOneGame(CribGame& game, const Net& net, int sims, double cPuct,
 // one antithetic pair: same deal seed, opposite initial dealer. Returns true if both games terminated.
 inline bool playMatchPair(const Net& net, int sims, double cPuct, uint32_t pairSeed,
                           Rng& searchRng, Mcts& mcts, std::vector<Sample>& out,
-                          int tempMoves = 0, double dirEps = 0.0, double dirAlpha = 0.8) {
+                          int tempMoves = 0, double dirEps = 0.0, double dirAlpha = 0.8,
+                          double fpu = 0.0, double cBase = 0.0) {
   Rng dealA(pairSeed); CribGame ga(dealA, /*initialDealer=*/0);
-  bool okA = playOneGame(ga, net, sims, cPuct, dealA, searchRng, mcts, out, tempMoves, dirEps, dirAlpha);
+  bool okA = playOneGame(ga, net, sims, cPuct, dealA, searchRng, mcts, out, tempMoves, dirEps, dirAlpha, fpu, cBase);
   Rng dealB(pairSeed); CribGame gb(dealB, /*initialDealer=*/1);
-  bool okB = playOneGame(gb, net, sims, cPuct, dealB, searchRng, mcts, out, tempMoves, dirEps, dirAlpha);
+  bool okB = playOneGame(gb, net, sims, cPuct, dealB, searchRng, mcts, out, tempMoves, dirEps, dirAlpha, fpu, cBase);
   return okA && okB;
 }
 
