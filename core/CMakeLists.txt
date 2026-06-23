@@ -6,7 +6,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-add_compile_options(-O3 -march=native -funroll-loops -ffast-math -Wall -Wextra)
+# reassociation (needed to vectorize the FP dot-product reductions — the big matmul speedup) WITHOUT
+# -ffinite-math-only, so NaN/Inf are still handled correctly (we don't assume their absence).
+add_compile_options(-O3 -march=native -funroll-loops
+  -fassociative-math -fno-signed-zeros -fno-trapping-math -fno-math-errno -Wall -Wextra)
 
 enable_testing()
 

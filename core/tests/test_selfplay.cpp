@@ -37,17 +37,24 @@ int main() {
     std::printf("  random self-play: %d games, %d stalled, %d score-bad\n", games, stalled, badScore);
   }
 
-  // 2) antithetic pairing: the two games in a pair share the same shuffle, mirrored — the dealer's 6 cards and
-  //    the cut match across the pair, with the seats swapped.
+  // 2) antithetic pairing across MANY hands: the two games share the same deal stream (same shuffle per hand)
+  //    with the dealer swapped, so the dealer's 6, the pone's 6, and the cut all mirror at EVERY hand — not
+  //    just the first. (Deal RNG consumes exactly one shuffle per hand, so the streams stay in lockstep.)
   {
     uint32_t seed = 777;
     Rng da(seed); CribGame ga(da, 0);   // dealer = seat 0
     Rng db(seed); CribGame gb(db, 1);   // dealer = seat 1
-    bool mirrored = ga.six[0].size() == 6 && gb.six[1].size() == 6;
-    for (int i = 0; i < 6 && mirrored; i++) mirrored = ga.six[0][i] == gb.six[1][i]; // dealer's hand = same cards
-    bool sameCut = ga.cutCard == gb.cutCard;
-    check(mirrored, "antithetic: dealer's 6 cards match across the mirrored pair");
-    check(sameCut, "antithetic: cut card matches across the pair");
+    bool allMirror = true;
+    for (int hand = 0; hand < 12; hand++) {
+      bool m = (ga.cutCard == gb.cutCard) && (ga.dealer != gb.dealer);
+      for (int i = 0; i < 6; i++)
+        m = m && (ga.six[ga.dealer][i] == gb.six[gb.dealer][i])   // both = this hand's "dealer group" (same cards)
+              && (ga.six[ga.pone][i] == gb.six[gb.pone][i]);
+      if (!m) { allMirror = false; break; }
+      ga.dealer = 1 - ga.dealer; ga.deal(da);   // advance to the next hand (mimics show(): rotate dealer + redeal)
+      gb.dealer = 1 - gb.dealer; gb.deal(db);
+    }
+    check(allMirror, "antithetic: every hand's deal mirrors across the pair (12 hands)");
   }
 
   // 3) MCTS self-play smoke: well-formed samples, then check the net can fit its own self-play targets.
