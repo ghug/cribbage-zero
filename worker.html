@@ -166,7 +166,7 @@
   function onWorkerFail() {
     if (mainMode || gotBatch) return;
     mainMode = true;
-    log("Web Workers unavailable here — self-playing on the main thread");
+    log("No multi-threading available. Self-playing on the main thread.");
     threads.forEach(function (w) { try { w.terminate(); } catch (e) {} }); threads = [];
     inFlight = 0;
     if (!rng && typeof makeRng === "function") rng = makeRng((Date.now() ^ 0x5bd1e995) >>> 0);
