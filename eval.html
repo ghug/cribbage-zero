@@ -42,11 +42,7 @@
   <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch is a
   separate, manual step you approve <i>after</i> the eval finishes. <a href="dev.html">← dev tools</a></p>
 
-  <label for="token">GitHub token (Contents: write — only needed to record)</label>
-  <input id="token" type="password" placeholder="ghp_… — only needed when you record" autocapitalize="off" autocorrect="off" />
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
   <div class="row">
-    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="5000" /></div>
     <div><label for="sims">MCTS sims (0 = greedy)</label><input id="sims" type="number" min="0" value="0" /></div>
   </div>
@@ -71,6 +67,8 @@
 
 <script src="worker/az_bundle.js"></script><!-- Net, CribGame, evalVsRandom, search, argmaxLegal, randomLegal, netFromObj, makeRng, handDetail, pegChooseDeep, pval -->
 <script src="src/winprob.js"></script><!-- winProbHand -->
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {   // IIFE so our locals (TARGET, COMBOS6, …) don't collide with the bundle's globals
   var $ = function (id) { return document.getElementById(id); };
@@ -176,8 +174,8 @@
   async function runEval() {
     if (busy) return; busy = true; $("run").disabled = true; $("record").disabled = true;
     $("rRand").textContent = "—"; $("rHard").textContent = "—"; last = null;
-    repo = $("repo").value.trim() || "ghug/cribbage-zero";
-    token = $("token").value.trim();   // reads use the token when present (higher rate limit), token-less otherwise
+    repo = CZ.repo();
+    token = CZ.token();   // reads use the token when present (higher rate limit), token-less otherwise
     sims = Math.max(0, parseInt($("sims").value, 10) || 0);   // 0 = greedy policy; >0 = MCTS per move (the canonical progress metric is sims=0)
     var decks = Math.max(1, parseInt($("decks").value, 10) || 5000), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
@@ -205,11 +203,11 @@
   async function recordLast() {
     if (busy || !last) return;
     if (last.testGames < 10000 || last.sims !== 0) { status("not recordable — need ≥ 10000 games and 0 MCTS sims"); log("recording blocked: " + last.testGames + " games, " + last.sims + " sims (need ≥ 10000 games and sims = 0)"); return; }
-    token = $("token").value.trim();
+    token = CZ.token();
     if (!token) { status("a token is required to record"); log("recording needs a Contents:write token — none entered"); return; }
     if (!(await confirmModal("Record to progress?", "net @ " + last.games.toLocaleString() + " games\nvs random: " + last.vsRand + "%\nvs hard:   " + last.vsHard + "%", "Record"))) { log("recording cancelled"); return; }
     busy = true; $("run").disabled = true; $("record").disabled = true;
-    repo = $("repo").value.trim() || "ghug/cribbage-zero";
+    repo = CZ.repo();
     try {
       status("recording …"); await sleep(0);
       await appendPoint("progress-random.csv", last.games, last.vsRand);
@@ -222,13 +220,9 @@
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
-  // token persistence is OPT-IN: only stored when "Remember" is checked, else in-memory (and any stored copy cleared)
-  function persistToken() { var t = $("token").value.trim(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
-  var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
-  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
-  $("remember").addEventListener("change", persistToken);
-  $("run").addEventListener("click", function () { localStorage.setItem("cz_repo", $("repo").value.trim() || "ghug/cribbage-zero"); runEval(); });
-  $("record").addEventListener("click", function () { persistToken(); recordLast(); });
+  // token + repo live in the shared Settings menu (chrome.js / window.CZ)
+  $("run").addEventListener("click", function () { CZ.persist(); runEval(); });
+  $("record").addEventListener("click", function () { CZ.persist(); recordLast(); });
 })();
 </script>
 </body>

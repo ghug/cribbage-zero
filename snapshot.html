@@ -46,13 +46,6 @@
   The live <code>net</code> branch keeps no history (one orphan commit), so these are your restore points.
   <a href="dev.html">← tools</a></p>
 
-  <label for="token">GitHub token (Contents: write — needed to snapshot or roll back)</label>
-  <input id="token" type="password" placeholder="ghp_… — leave blank to just browse" autocapitalize="off" autocorrect="off" />
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
-  <div class="row">
-    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
-  </div>
-
   <div class="btns">
     <button id="snap" class="act">📸 Snapshot now</button>
     <button id="refresh" class="act">↻ Refresh list</button>
@@ -76,6 +69,8 @@
   </div>
 </div>
 
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -83,8 +78,8 @@
   var busy = false, pendingRollback = null;
   function status(m) { $("status").textContent = m || ""; }
   function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; }
-  function token() { return $("token").value.trim(); }
-  function repo() { return $("repo").value.trim() || "ghug/cribbage-zero"; }
+  function token() { return CZ.token(); }
+  function repo() { return CZ.repo(); }
   function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
   function unb64(s) { return decodeURIComponent(escape(atob(s.replace(/\s/g, "")))); }
   function stamp() { var d = new Date().toISOString(); return d.slice(0, 10).replace(/-/g, "") + "-" + d.slice(11, 16).replace(":", ""); }
@@ -175,7 +170,7 @@
     $("ovl").classList.remove("show");
     if (busy || !pendingRollback) return;
     var name = pendingRollback; pendingRollback = null;
-    busy = true; persistToken(); status("rolling back…");
+    busy = true; CZ.persist(); status("rolling back…");
     try {
       var text = await ghRaw("/contents/" + DIR + "/" + encodeURIComponent(name) + "?ref=" + ARCH);
       var o = JSON.parse(text);
@@ -190,12 +185,8 @@
     busy = false;
   }
 
-  // token persistence is OPT-IN: only stored when "Remember" is checked, else in-memory (and any stored copy cleared)
-  function persistToken() { var t = token(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
-  var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
-  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
-  $("remember").addEventListener("change", persistToken);
-  $("snap").addEventListener("click", function () { persistToken(); localStorage.setItem("cz_repo", repo()); snapshot(); });
+  // token + repo live in the shared Settings menu (chrome.js / window.CZ)
+  $("snap").addEventListener("click", function () { CZ.persist(); snapshot(); });
   $("refresh").addEventListener("click", refresh);
   $("cancel").addEventListener("click", function () { $("ovl").classList.remove("show"); pendingRollback = null; });
   $("confirm").addEventListener("click", doRollback);

@@ -28,8 +28,6 @@
   <p class="sub">Triggers cribbage-trainer's <b>refresh-zero-net</b> workflow — it pulls the latest net from the
   <code>net</code> branch into the game's "Zero" bot bundle and rebuilds. <a href="dev.html">← tools</a></p>
 
-  <label for="token">GitHub token (Actions: write on the trainer repo)</label>
-  <input id="token" type="password" placeholder="ghp_…" autocapitalize="off" autocorrect="off" />
   <div class="row">
     <div><label for="repo">Trainer repo</label><input id="repo" value="ghug/cribbage-trainer" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="ref">Branch</label><input id="ref" value="dev" autocapitalize="off" autocorrect="off" /></div>
@@ -42,6 +40,8 @@
   runs, check the trainer repo's Actions tab. Public domain (The Unlicense).</p>
 </div>
 
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -52,8 +52,9 @@
 
   async function go() {
     if (busy) return;
-    var token = $("token").value.trim(), repo = $("repo").value.trim() || "ghug/cribbage-trainer", ref = $("ref").value.trim() || "dev";
-    if (!token) { status("a token is required"); return; }
+    var token = CZ.token(), repo = $("repo").value.trim() || "ghug/cribbage-trainer", ref = $("ref").value.trim() || "dev";
+    if (!token) { status("a token is required (add one in ⚙ Settings)"); return; }
+    CZ.persist();
     busy = true; $("go").disabled = true; status("dispatching …");
     try {
       var res = await fetch("https://api.github.com/repos/" + repo + "/actions/workflows/" + WORKFLOW + "/dispatches", {

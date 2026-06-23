@@ -45,14 +45,13 @@
 <div class="wrap">
   <div class="hdr">
     <h1>♣ Cribbage Zero — Trainer</h1>
-    <button id="gear" class="icon" type="button" aria-label="Settings">⚙</button>
-    <button id="aboutBtn" class="icon" type="button" aria-label="About">ⓘ</button>
   </div>
   <p class="sub" style="margin:0 0 16px;">Trains the network on this device by self-play, and pushes the net to GitHub so it's saved.</p>
 
   <div class="row">
     <div><label for="games">Games / iter</label><input id="games" type="number" min="1" value="40" /></div>
     <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="40" /></div>
+    <div><label for="effort">CPU effort %</label><input id="effort" type="number" min="10" max="100" value="100" /></div>
   </div>
 
   <div class="btns">
@@ -70,38 +69,9 @@
   every iteration; it is pushed to the GitHub <b>net</b> branch only when you <b>Wind down</b> or <b>Stop</b>
   (not mid-run). On Start it resumes from whichever is newer, local or GitHub.
   <span id="reset" class="reset">Reset local net</span>.</p>
-  <p style="text-align:center; margin:14px 0 0;"><a href="dev.html" style="color:var(--gold); font-size:13px; text-decoration:none;">⚙ Tools — evaluate &amp; publish the net →</a></p>
+  <p style="text-align:center; margin:14px 0 0;"><span id="tomode" style="color:var(--gold); font-size:13px; cursor:pointer;">⇄ Switch to Cloudflare worker mode</span></p>
+  <p style="text-align:center; margin:6px 0 0;"><a href="dev.html" style="color:var(--gold); font-size:13px; text-decoration:none;">⚙ Tools — evaluate &amp; publish the net →</a></p>
   <p class="footer" id="footer">Cribbage Zero v<span id="footerVer">0.1.9</span></p>
-</div>
-
-<!-- Settings modal -->
-<div class="overlay" id="settingsOverlay" role="dialog" aria-modal="true" aria-label="Settings">
-  <div class="modal">
-    <div class="modal-head"><h2>Settings</h2><button class="done" id="settingsDone" type="button">Done</button></div>
-    <label for="token">GitHub token (Contents: write)</label>
-    <input id="token" type="password" placeholder="ghp_… — leave blank to train only" autocapitalize="off" autocorrect="off" />
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:8px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
-    <label for="repo">Repo (owner/name)</label>
-    <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
-    <label for="effort">CPU effort % (lower = cooler &amp; slower; adjustable live)</label>
-    <input id="effort" type="number" min="10" max="100" value="100" />
-    <button class="done full" id="tomode" type="button">⇄ Switch to Cloudflare worker mode</button>
-    <button class="done full" id="openAbout" type="button">About Cribbage Zero</button>
-  </div>
-</div>
-
-<!-- About modal -->
-<div class="overlay" id="aboutOverlay" role="dialog" aria-modal="true" aria-label="About">
-  <div class="modal">
-    <div class="modal-head"><h2>About</h2><button class="done" id="aboutDone" type="button">Done</button></div>
-    <p>An open-source, from-scratch <b>AlphaZero-style</b> cribbage trainer. This device plays cribbage
-    against itself and learns from it — a neural network guided by Monte-Carlo Tree Search (MCTS) — then
-    saves the trained network to GitHub.</p>
-    <p>Two modes (toggle on the main screen): this <b>on-device trainer</b>, or a <b>Cloudflare worker</b>
-    that contributes self-play to a shared bus. The net is force-pushed to the repo's <b>net</b> branch.</p>
-    <p>Version <span id="ver">0.1.8</span> · public domain (The Unlicense).</p>
-    <p><a id="repoLink" href="https://github.com/ghug/cribbage-zero" target="_blank" rel="noopener noreferrer">Source, bugs &amp; feedback ↗</a></p>
-  </div>
 </div>
 
 <!-- in-page confirm modal (no native dialogs — works in the bare WebView) -->
@@ -117,6 +87,7 @@
 </div>
 
 <script src="version.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script src="worker/az_bundle.js"></script><!-- selfPlay, train, freshNet, netToObj/netFromObj, evalVsRandom, makeRng -->
 <script>
 (function () {
@@ -143,9 +114,6 @@
     $("stats").textContent = s;
   }
   function progress(t) { $("progress").textContent = running ? t : ""; }
-
-  // token persistence is OPT-IN: only stored when "Remember" is checked, else kept in memory (and any stored copy cleared)
-  function persistToken() { var t = $("token").value.trim(); if ($("remember").checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
 
   // --- local persistence ---
   function validCkpt(o) {
@@ -188,7 +156,7 @@
   // read-only "games trained" status — token-LESS (public repo). Prefer the info file (small, canonical);
   // fall back to the head commit message ("net @ iter X (Y games)"), then the whole net file (raw).
   async function pullNetMeta() {
-    var tk = $("token").value.trim();
+    var tk = CZ.token();
     var raw = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" }; if (tk) raw.Authorization = "Bearer " + tk;
     try { var ir = await fetch("https://api.github.com/repos/" + repo + "/contents/" + encodeURIComponent(INFOPATH) + "?ref=" + BRANCH, { headers: raw, cache: "no-store" });
       if (ir.ok) { var io = JSON.parse(await ir.text()); return { iter: io.iter || 0, games: io.games || 0 }; } } catch (e) {}
@@ -204,7 +172,7 @@
   var refreshing = false;
   async function refreshNetCount() {
     if (refreshing) return; refreshing = true;
-    repo = ($("repo").value.trim() || "ghug/cribbage-zero");
+    repo = CZ.repo();
     $("netinfo").textContent = "checking GitHub…";
     try {
       var meta = await pullNetMeta();
@@ -251,9 +219,8 @@
 
   async function start() {
     if (typeof selfPlay !== "function") { log("engine bundle not loaded"); return; }
-    token = $("token").value.trim(); repo = ($("repo").value.trim() || "ghug/cribbage-zero");
-    localStorage.setItem("cz_repo", repo); localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
-    persistToken();
+    CZ.persist(); token = CZ.token(); repo = CZ.repo();
+    localStorage.setItem("cz_games", $("games").value); localStorage.setItem("cz_sims", $("sims").value);
     // warn on a missing token — training will run read-only until one is added
     if (!token && !(await confirmModal("No GitHub token", "Training resumes from the public net but WON'T be saved to GitHub until you add a token in Settings (you can add it later, mid-run). Continue?", "Continue"))) return;
     if (!token) log("⚠ no token — read-only: progress won't push until you add a token in Settings");
@@ -286,7 +253,7 @@
     if (!running) return;
     running = false; winding = false; updateButtons(); progress("");
     log("stopped (saved at iter " + iter + ")");
-    token = $("token").value.trim(); persistToken();   // live re-read so a late token still does the final push
+    CZ.persist(); token = CZ.token();   // live re-read so a late token still does the final push
     if (token) pushNet().then(function () { log("final push: net iter " + iter); }).catch(function (e) { log("final push failed: " + e.message); });
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
@@ -305,18 +272,8 @@
       $("cmCancel").onclick = function () { done(false); };
     });
   }
-  $("gear").addEventListener("click", function () { open($("settingsOverlay")); });
-  $("settingsDone").addEventListener("click", function () { close($("settingsOverlay")); });
-  $("aboutBtn").addEventListener("click", function () { open($("aboutOverlay")); });
-  $("footer").addEventListener("click", function () { open($("aboutOverlay")); });
-  $("aboutDone").addEventListener("click", function () { close($("aboutOverlay")); });
-  $("openAbout").addEventListener("click", function () { close($("settingsOverlay")); open($("aboutOverlay")); });
-
-  $("ver").textContent = VERSION; $("footerVer").textContent = VERSION;
-  // restore config
-  $("repo").value = localStorage.getItem("cz_repo") || "ghug/cribbage-zero";
-  var savedTok = localStorage.getItem("cz_token"); if (savedTok) { $("token").value = savedTok; $("remember").checked = true; }
-  $("remember").addEventListener("change", persistToken);
+  $("footerVer").textContent = VERSION;
+  // restore page-specific config (token + repo live in the shared Settings menu, owned by chrome.js)
   if (localStorage.getItem("cz_games")) $("games").value = localStorage.getItem("cz_games");
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");

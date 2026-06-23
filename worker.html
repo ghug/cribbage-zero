@@ -37,9 +37,7 @@
   <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.gabrielhug.workers.dev" autocapitalize="off" autocorrect="off" />
   <label for="tok">Worker token</label>
   <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
-  <label for="repo">Net repo (GitHub, public)</label>
-  <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember worker token on this device (otherwise in-memory only)</label>
   <div class="row">
     <div><label for="upload">Upload every (min)</label><input id="upload" type="number" min="0.05" step="0.5" value="5" /></div>
     <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="50" /></div>
@@ -64,6 +62,7 @@
 </div>
 
 <script src="version.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>document.getElementById("ver").textContent = window.CZ_VERSION;</script>
 <script src="worker/az_bundle.js"></script><!-- provides makeSync() on the main thread -->
 <script>
@@ -108,7 +107,6 @@
   $("api").value = localStorage.getItem("az_api") || "https://cribbage-zero-bus.gabrielhug.workers.dev";
   var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
   $("remember").addEventListener("change", persistToken);
-  $("repo").value = localStorage.getItem("az_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("az_upload")) $("upload").value = localStorage.getItem("az_upload");
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
   $("threads").value = localStorage.getItem("az_threads") || Math.min((navigator.hardwareConcurrency || 2), 4);
@@ -124,7 +122,7 @@
   var netRepo = "ghug/cribbage-zero", lastNetCheck = 0;
   async function ghRaw(file) {
     var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
-    var tk = localStorage.getItem("cz_token"); if (tk) H.Authorization = "Bearer " + tk;
+    var tk = CZ.token(); if (tk) H.Authorization = "Bearer " + tk;
     var res = await fetch("https://api.github.com/repos/" + netRepo + "/contents/checkpoints/" + file + "?ref=net",
       { headers: H, cache: "no-store" });
     if (res.status === 404) return null;
@@ -186,11 +184,11 @@
 
   async function start() {
     var apiUrl = $("api").value.trim(), token = $("tok").value.trim();
-    netRepo = ($("repo").value.trim() || "ghug/cribbage-zero");
+    netRepo = CZ.repo();
     if (!apiUrl || !token) { log("enter the bus URL and your worker token first"); return; }
     var upMin = parseFloat($("upload").value) || 5, sims = parseInt($("sims").value, 10) || 20, n = nThreads();
     flushMs = Math.max(2000, upMin * 60000);
-    localStorage.setItem("az_api", apiUrl); persistToken(); localStorage.setItem("az_repo", netRepo);
+    localStorage.setItem("az_api", apiUrl); persistToken(); CZ.persist();
     localStorage.setItem("az_upload", upMin); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
     if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
     workerId = wid();

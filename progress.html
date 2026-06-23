@@ -42,21 +42,20 @@
   </div>
 
   <div class="bar">
-    <div><label for="repo">Repo</label><input id="repo" value="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" /></div>
-    <div style="flex:0 0 auto"><label>&nbsp;</label><button id="refresh">↻ Refresh</button></div>
+    <div style="flex:0 0 auto"><button id="refresh">↻ Refresh</button></div>
   </div>
-  <details class="note"><summary>Token (optional — only to dodge the anonymous rate limit)</summary>
-    <input id="token" type="password" placeholder="ghp_…" autocapitalize="off" autocorrect="off" style="margin-top:6px" /></details>
   <div id="status"></div>
   <p class="note">Read-only and token-less by default (the progress branch is public). The two series use very
   different scales — vs-hard starts near zero and climbs as the net learns. Public domain (The Unlicense).</p>
 </div>
 
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var series = [{ name: "vs random", color: "#d6bc7a", pts: [] }, { name: "vs hard", color: "#6fbf8e", pts: [] }];
-  function repo() { return $("repo").value.trim() || "ghug/cribbage-zero"; }
+  function repo() { return CZ.repo(); }
   function status(m) { $("status").textContent = m || ""; }
   function fmtGames(x) { return x >= 1000 ? +(x / 1000).toFixed(x >= 10000 ? 0 : 1) + "k" : "" + Math.round(x); }
 
@@ -69,7 +68,7 @@
   }
   async function getCsv(file) {
     var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
-    var tk = $("token").value.trim(); if (tk) H.Authorization = "Bearer " + tk;
+    var tk = CZ.token(); if (tk) H.Authorization = "Bearer " + tk;
     var res = await fetch("https://api.github.com/repos/" + repo() + "/contents/" + file + "?ref=progress", { headers: H, cache: "no-store" });
     if (res.status === 404) return [];
     if (res.status === 403) throw new Error("rate-limited — add a token");
@@ -114,9 +113,7 @@
     } catch (e) { status("error: " + e.message); }
   }
 
-  if (localStorage.getItem("cz_repo")) $("repo").value = localStorage.getItem("cz_repo");
-  if (localStorage.getItem("cz_token")) $("token").value = localStorage.getItem("cz_token");
-  $("refresh").addEventListener("click", function () { localStorage.setItem("cz_repo", repo()); load(); });
+  $("refresh").addEventListener("click", function () { CZ.persist(); load(); });
   window.addEventListener("resize", draw);
   load();
 })();

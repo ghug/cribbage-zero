@@ -40,8 +40,6 @@
   <p class="sub">Dispatches cribbage-trainer's <b>Release trainer</b> workflow — it refreshes the Zero net,
   finalizes the version, builds, tags, and publishes a <b>signed APK release</b>. <a href="dev.html">← tools</a></p>
 
-  <label for="token">GitHub token (Actions: write on the trainer repo)</label>
-  <input id="token" type="password" placeholder="ghp_…" autocapitalize="off" autocorrect="off" />
   <div class="row">
     <div><label for="repo">Trainer repo</label><input id="repo" value="ghug/cribbage-trainer" autocapitalize="off" autocorrect="off" /></div>
     <div><label for="ref">Branch</label><input id="ref" value="dev" autocapitalize="off" autocorrect="off" /></div>
@@ -69,6 +67,8 @@
   </div>
 </div>
 
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -79,8 +79,8 @@
 
   function showConfirm() {
     if (busy) return;
-    var token = $("token").value.trim();
-    if (!token) { status("a token is required"); return; }
+    var token = CZ.token();
+    if (!token) { status("a token is required (add one in ⚙ Settings)"); return; }
     var repo = $("repo").value.trim() || "ghug/cribbage-trainer", ref = $("ref").value.trim() || "dev";
     var cl = $("changelog").value.trim();
     if (!cl) { status("a changelog is required"); return; }
@@ -92,7 +92,8 @@
   async function dispatch() {
     hideConfirm();
     if (busy) return;
-    var token = $("token").value.trim(), repo = $("repo").value.trim() || "ghug/cribbage-trainer",
+    CZ.persist();
+    var token = CZ.token(), repo = $("repo").value.trim() || "ghug/cribbage-trainer",
         ref = $("ref").value.trim() || "dev", cl = $("changelog").value.trim();
     busy = true; $("go").disabled = true; status("dispatching …");
     try {
