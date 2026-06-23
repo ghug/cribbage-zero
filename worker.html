@@ -37,6 +37,7 @@
   <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.&lt;you&gt;.workers.dev" autocapitalize="off" autocorrect="off" />
   <label for="tok">Worker token</label>
   <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
+  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember token on this device (otherwise in-memory only)</label>
   <label for="repo">Net repo (GitHub, public)</label>
   <input id="repo" placeholder="ghug/cribbage-zero" autocapitalize="off" autocorrect="off" />
   <div class="row">
@@ -99,8 +100,11 @@
   }
 
   // restore saved config
+  // token persistence is OPT-IN: only saved when "Remember" is checked, else in-memory (and any stored copy cleared)
+  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
   $("api").value = localStorage.getItem("az_api") || "";
-  $("tok").value = localStorage.getItem("az_tok") || "";
+  var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
+  $("remember").addEventListener("change", persistToken);
   $("repo").value = localStorage.getItem("az_repo") || "ghug/cribbage-zero";
   if (localStorage.getItem("az_upload")) $("upload").value = localStorage.getItem("az_upload");
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
@@ -179,7 +183,7 @@
     if (!apiUrl || !token) { log("enter the bus URL and your worker token first"); return; }
     var upMin = parseFloat($("upload").value) || 5, sims = parseInt($("sims").value, 10) || 20, n = nThreads();
     flushMs = Math.max(2000, upMin * 60000);
-    localStorage.setItem("az_api", apiUrl); localStorage.setItem("az_tok", token); localStorage.setItem("az_repo", netRepo);
+    localStorage.setItem("az_api", apiUrl); persistToken(); localStorage.setItem("az_repo", netRepo);
     localStorage.setItem("az_upload", upMin); localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", n);
     if (typeof makeSync !== "function") { log("engine bundle not loaded (worker/az_bundle.js missing?)"); return; }
     workerId = wid();
