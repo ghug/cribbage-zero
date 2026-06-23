@@ -68,7 +68,12 @@ CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;worker&gt;  node engine/az_contribute.js --actor 
 
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
   (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
-  Public domain (The Unlicense).</p>
+  Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
+<script>
+  // Single source of truth = the repo-root VERSION file (kept in sync by hand; no build step stamps it).
+  // dev: <next-patch>-dev.<n> (bump <n> on every code-changing dev commit); a release drops the -dev.<n> suffix.
+  document.getElementById("ver").textContent = "0.1.32-dev.1";
+</script>
 </body>
 </html>
