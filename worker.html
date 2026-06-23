@@ -59,7 +59,7 @@
   <p class="note">This device is an <b>actor</b>: it self-plays against the learner's net (read from the public
   GitHub <b>net</b> branch) and uploads <b>every</b> sample it produces (in chunks) to the data bus. The screen
   is kept awake while running. The token only lets this device append self-play — it can't read or change anyone
-  else's data; the net is read anonymously from GitHub.</p>
+  else's data; the net is read from GitHub with your saved GitHub token if you have one (else anonymously).</p>
   <p class="note" style="margin-top:10px">Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 
@@ -117,12 +117,16 @@
   function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
   document.addEventListener("visibilitychange", function () { if (running && document.visibilityState === "visible" && !wakeLock) acquireWake(); });
 
-  // The net lives on the public GitHub `net` branch (the learner pushes it). We read it anonymously (no
-  // GitHub token), via the RAW media type (it's multi-MB, past the 1MB JSON-inline cap).
+  // The net lives on the public GitHub `net` branch (the learner pushes it), fetched via the RAW media type
+  // (it's multi-MB, past the 1MB JSON-inline cap). We read it with the on-device trainer's GitHub token if one
+  // is saved here (shared "cz_token" key — authenticated reads get the 5000/hr API limit vs 60/hr anonymous,
+  // and can reach a private net); otherwise anonymously.
   var netRepo = "ghug/cribbage-zero", lastNetCheck = 0;
   async function ghRaw(file) {
+    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    var tk = localStorage.getItem("cz_token"); if (tk) H.Authorization = "Bearer " + tk;
     var res = await fetch("https://api.github.com/repos/" + netRepo + "/contents/checkpoints/" + file + "?ref=net",
-      { headers: { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" }, cache: "no-store" });
+      { headers: H, cache: "no-store" });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(file + " -> " + res.status);
     return JSON.parse(await res.text());
