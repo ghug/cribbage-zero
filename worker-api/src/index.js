@@ -12,8 +12,13 @@
  *   GET  /shards?limit=N            -> { shards:[{id,samples}] } (learner)  pull a batch (no delete)
  *   POST /prune  {ids:[...]}        -> { ok, pruned }            (learner)  delete consumed shards
  *   GET  /stats                     -> { pendingShards }         (actor)    queue depth
+ *   POST /lease/acquire {id,ttl}    -> { ok, holder, expires_at } (learner) acquire/renew the learner lock
+ *   POST /lease/release {id}        -> { ok }                    (learner)  release the lock (clean stop)
+ *   GET  /lease                     -> { holder, expires_at }    (learner)  inspect the lock
  *
- * Shards are chunked small by the clients (D1 caps a row's size), so each row stays well within limits.
+ * The lease is a single-holder mutual-exclusion lock (TRAINER token) so only ONE learner trains + force-pushes
+ * the net at a time; a TTL lets a failover take over if the holder dies. Shards are chunked small by the
+ * clients (D1 caps a row's size), so each row stays well within limits.
  */
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -65,6 +70,34 @@ export default {
         if (!isActor) return json({ error: "unauthorized" }, 401);
         const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM shards").first();
         return json({ pendingShards: c ? c.n : 0 });
+      }
+
+      // ----- learner lease (single-holder lock; TRAINER token only) — so only ONE learner trains + pushes -----
+      if (request.method === "POST" && path === "/lease/acquire") {
+        if (!isTrainer) return json({ error: "forbidden" }, 403);
+        const body = await request.json().catch(() => null);
+        const id = String((body && body.id) || "").slice(0, 64);
+        if (!id) return json({ error: "bad request" }, 400);
+        const ttl = Math.max(1000, Math.min(3600000, parseInt(body && body.ttl, 10) || 600000));
+        const now = Date.now();
+        // grant iff the lease is free, already ours, or expired — a single atomic UPDATE (D1 serializes writes)
+        await env.DB.prepare("INSERT OR IGNORE INTO lease (id, holder, expires_at) VALUES (1, '', 0)").run();
+        await env.DB.prepare("UPDATE lease SET holder=?, expires_at=? WHERE id=1 AND (holder='' OR holder=? OR expires_at < ?)")
+          .bind(id, now + ttl, id, now).run();
+        const row = await env.DB.prepare("SELECT holder, expires_at FROM lease WHERE id=1").first();
+        return json({ ok: !!row && row.holder === id, holder: row ? row.holder : "", expires_at: row ? row.expires_at : 0, now });
+      }
+      if (request.method === "POST" && path === "/lease/release") {
+        if (!isTrainer) return json({ error: "forbidden" }, 403);
+        const body = await request.json().catch(() => null);
+        const id = String((body && body.id) || "").slice(0, 64);
+        await env.DB.prepare("UPDATE lease SET holder='', expires_at=0 WHERE id=1 AND holder=?").bind(id).run();
+        return json({ ok: true });
+      }
+      if (request.method === "GET" && path === "/lease") {
+        if (!isTrainer) return json({ error: "forbidden" }, 403);
+        const row = await env.DB.prepare("SELECT holder, expires_at FROM lease WHERE id=1").first();
+        return json({ holder: row ? row.holder : "", expires_at: row ? row.expires_at : 0, now: Date.now() });
       }
 
       return json({ error: "not found" }, 404);

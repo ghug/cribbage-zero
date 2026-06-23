@@ -55,6 +55,25 @@ public:
     return j.is_discarded() ? -1 : j.value("pendingShards", -1L);
   }
 
+  // single-writer learner lease. `available` is false if the bus has no lease route (old Worker) or a
+  // transient error → the caller treats that as "no lock available" and proceeds without one.
+  struct Lease { bool ok = false; bool available = true; std::string holder; long expiresAt = 0; };
+  Lease acquireLease(const std::string& id, long ttlMs) {
+    Lease L;
+    json body; body["id"] = id; body["ttl"] = ttlMs;
+    auto r = http_->post(base_ + "/lease/acquire", body.dump(), authHeaders());
+    if (r.status != 200) { L.available = false; return L; }
+    auto j = json::parse(r.body, nullptr, false);
+    if (j.is_discarded()) { L.available = false; return L; }
+    L.ok = j.value("ok", false); L.holder = j.value("holder", std::string()); L.expiresAt = j.value("expires_at", 0L);
+    return L;
+  }
+  bool releaseLease(const std::string& id) {
+    json body; body["id"] = id;
+    auto r = http_->post(base_ + "/lease/release", body.dump(), authHeaders());
+    return r.status == 200;
+  }
+
 private:
   HttpClient* http_;
   std::string base_, token_;

@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LEASE_TTL_MS.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -118,10 +118,27 @@ int main(int argc, char** argv) {
   }
 
   if (token.empty()) { log("learner needs CZ_TOKEN (or use --dry/--actor)"); return 1; }
+
+  // single-writer lease: only ONE learner may train + push. Acquire before training; if the bus has no lease
+  // route it degrades to no-lock (with a warning); if another learner holds it, refuse to start.
+  long leaseTtl = envi("CZ_LEASE_TTL_MS", 600000);
+  bool usingLease = false;
+  if (bus) {
+    auto L = bus->acquireLease(workerId, leaseTtl);
+    if (!L.available) log("note: bus has no learner lease (redeploy the Worker to enable it) — running WITHOUT the single-writer lock");
+    else if (!L.ok) { log("FATAL: another learner holds the lease (holder " + L.holder + ") — refusing to start a second learner."); return 1; }
+    else { usingLease = true; log("acquired the learner lease"); }
+  }
+
   ReplayBuffer buf(bufCap);
   long pushAccum = 0;
+  bool lostLease = false;
   log("LEARNER: self-play + train + push every " + std::to_string(pushEvery) + " games");
   while (!g_stop) {
+    if (usingLease) {   // renew at the top of each round (TTL >> round time)
+      auto L = bus->acquireLease(workerId, leaseTtl);
+      if (L.available && !L.ok) { log("lost the learner lease (holder " + L.holder + ") — another learner took over; stopping WITHOUT pushing."); lostLease = true; break; }
+    }
     std::vector<Sample> local;
     long played = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, local, tempMoves, dirEps, dirAlpha, fpu, cBase);
     long newSamples = (long)local.size();
@@ -137,6 +154,7 @@ int main(int argc, char** argv) {
     log(line);
     if (pushAccum >= pushEvery) { if (gh.pushNet(net, iter, games)) { log("pushed " + std::to_string(games) + " games"); pushAccum = 0; } else log("push failed"); }
   }
-  if (gh.pushNet(net, iter, games)) log("wind-down push");
+  if (!lostLease && gh.pushNet(net, iter, games)) log("wind-down push");   // don't push if a failover took over
+  if (usingLease) bus->releaseLease(workerId);
   return 0;
 }
