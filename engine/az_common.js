@@ -59,11 +59,25 @@ function evalVsRandom(net, games, rng) {
 // Format: { iter, nIn, hidden:[...], nHid(last), nPol, W:[...], b:[...], Wv, bv, Wp, bp }. netFromObj also
 // reads the legacy single-layer shape (W1/b1) so old archived checkpoints stay loadable.
 function netToObj(net, iter) { return { iter, nIn: net.nIn, hidden: net.hidden.slice(), nHid: net.nHid, nPol: net.nPol, W: net.W, b: net.b, Wv: net.Wv, bv: net.bv, Wp: net.Wp, bp: net.bp }; }
+// flat row-major (rows*cols) → nested [rows][cols]; an already-nested array passes through unchanged.
+function reshapeMat(a, rows, cols) {
+  if (!a || a.length === 0 || Array.isArray(a[0])) return a;   // already nested (a JS-trained net)
+  const out = new Array(rows);
+  for (let i = 0; i < rows; i++) { const row = new Array(cols), base = i * cols; for (let k = 0; k < cols; k++) row[k] = a[base + k]; out[i] = row; }
+  return out;
+}
 function netFromObj(o) {
   const hidden = o.hidden || [o.nHid];
   const n = new Net(o.nIn, hidden, o.nPol);
-  if (o.W) { n.W = o.W; n.b = o.b; } else { n.W = [o.W1]; n.b = [o.b1]; }   // legacy single-layer
-  n.Wv = o.Wv; n.bv = o.bv; n.Wp = o.Wp; n.bp = o.bp; return n;
+  // The C++ engine serializes W[l]/Wp FLAT (row-major dout*din, nPol*nHid); JS Net.forward indexes them
+  // nested ([dout][din], [nPol][nHid]). Reshape flat → nested on load so the JS engine (eval.html/eval_zero)
+  // can run a C++-trained net. JS-trained nets are already nested and pass through. b/Wv/bv/bp are flat in both.
+  if (o.W) {
+    const sizes = [o.nIn].concat(hidden);
+    n.W = o.W.map((layer, l) => reshapeMat(layer, sizes[l + 1], sizes[l]));
+    n.b = o.b;
+  } else { n.W = [o.W1]; n.b = [o.b1]; }   // legacy single-layer
+  n.Wv = o.Wv; n.bv = o.bv; n.Wp = reshapeMat(o.Wp, o.nPol, n.nHid); n.bp = o.bp; return n;
 }
 function freshNet(hidden) { return new Net(INPUT_DIM, hidden, NPOL); }
 function writeAtomic(file, str) { const tmp = file + ".tmp" + process.pid; fs.writeFileSync(tmp, str); fs.renameSync(tmp, file); }
