@@ -24,10 +24,9 @@ inline std::string base64(const std::string& in) {
 
 class GithubNet {
 public:
-  GithubNet(HttpClient* http, std::string repo, std::string token)
-      : http_(http), repo_(std::move(repo)), token_(std::move(token)) {}
+  GithubNet(HttpClient* http, std::string repo, std::string token, std::string branch = "net")
+      : http_(http), repo_(std::move(repo)), token_(std::move(token)), branch_(std::move(branch)) {}
 
-  static constexpr const char* BRANCH = "net";
   static constexpr const char* CKPATH = "checkpoints/az_checkpoint.json";
   static constexpr const char* INFOPATH = "checkpoints/info.json";
 
@@ -77,13 +76,13 @@ public:
     if (cr.status >= 400) return false;
     std::string commitSha = json::parse(cr.body).at("sha").get<std::string>();
 
-    auto ref = http_->get(api("/git/ref/heads/" + std::string(BRANCH)), jsonHeaders());
+    auto ref = http_->get(api("/git/ref/heads/" + branch_), jsonHeaders());
     if (ref.status == 200) {
       json patch; patch["sha"] = commitSha; patch["force"] = true;
-      auto pr = http_->request("PATCH", api("/git/refs/heads/" + std::string(BRANCH)), patch.dump(), jsonHeaders());
+      auto pr = http_->request("PATCH", api("/git/refs/heads/" + branch_), patch.dump(), jsonHeaders());
       return pr.status < 400;
     } else {
-      json create; create["ref"] = "refs/heads/" + std::string(BRANCH); create["sha"] = commitSha;
+      json create; create["ref"] = "refs/heads/" + branch_; create["sha"] = commitSha;
       auto cr2 = http_->post(api("/git/refs"), create.dump(), jsonHeaders());
       return cr2.status < 400;
     }
@@ -91,11 +90,11 @@ public:
 
 private:
   HttpClient* http_;
-  std::string repo_, token_;
+  std::string repo_, token_, branch_;
 
   std::string api(const std::string& path) const { return "https://api.github.com/repos/" + repo_ + path; }
   std::string contents(const std::string& path) const {
-    return api("/contents/" + path + "?ref=" + std::string(BRANCH));
+    return api("/contents/" + path + "?ref=" + branch_);
   }
   std::string blob(const std::string& content) {
     json b; b["content"] = base64(content); b["encoding"] = "base64";
