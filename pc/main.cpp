@@ -2,6 +2,8 @@
 //   LEARNER (default): pull net -> self-play + drain bus -> replay-buffer train -> push net every N games.
 //   ACTOR  (--actor):  pull net -> self-play -> upload shards to the bus -> refresh net when it advances.
 //   --dry: local self-play bench only (no network, no push) — safe to run anywhere.
+//   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
+//            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
 //      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
@@ -31,9 +33,9 @@ static double envf(const char* k, double def) { const char* v = getenv(k); retur
 static void log(const std::string& m) { std::printf("[cz] %s\n", m.c_str()); std::fflush(stdout); }
 
 int main(int argc, char** argv) {
-  bool actor = false, dry = false;
+  bool actor = false, dry = false, fresh = false;
   std::vector<std::string> pos;
-  for (int i = 1; i < argc; i++) { std::string a = argv[i]; if (a == "--actor") actor = true; else if (a == "--dry") dry = true; else pos.push_back(a); }
+  for (int i = 1; i < argc; i++) { std::string a = argv[i]; if (a == "--actor") actor = true; else if (a == "--dry") dry = true; else if (a == "--fresh") fresh = true; else pos.push_back(a); }
 
   const std::vector<int> HIDDEN = {256, 256, 256, 256};
   int gamesPerRound = pos.size() > 0 ? atoi(pos[0].c_str()) : envi("CZ_CHUNK", 500);
@@ -70,11 +72,31 @@ int main(int argc, char** argv) {
   std::unique_ptr<BusClient> bus;
   if (!busUrl.empty() && !busTok.empty()) bus.reset(new BusClient(&http, busUrl, busTok));
 
+  // Net load — SAFE: only start fresh on a genuine 404 (or explicit --fresh). A read error or a
+  // wrong-architecture net ABORTS, so a transient failure can never overwrite the live net branch.
   Net net(INPUT_DIM, HIDDEN, NPOL, 0.0, 1);
-  int iter = 0; long games = 0;
-  { auto n = gh.pullNet();
-    if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) { net = netFromJson(*n); iter = n->value("iter", 0); games = n->value("games", 0L); log("resuming net iter " + std::to_string(iter) + " (" + std::to_string(games) + " games)"); }
-    else log("fresh net"); }
+  int iter = 0; long games = 0; bool haveNet = false;
+  if (fresh) {
+    log("--fresh: random net (will OVERWRITE the net branch on the first push)");
+  } else {
+    try {
+      auto n = gh.pullNet();   // nullopt = genuine 404; throws on a read error
+      if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) {
+        net = netFromJson(*n); iter = n->value("iter", 0); games = n->value("games", 0L); haveNet = true;
+        log("resuming net iter " + std::to_string(iter) + " (" + std::to_string(games) + " games)");
+      } else if (n) {
+        log("FATAL: the net branch holds a different architecture (nIn " + std::to_string(n->value("nIn", -1)) +
+            ") — refusing to start so we don't overwrite it. Use --fresh to reset deliberately.");
+        return 1;
+      } else {
+        log("no net on GitHub yet (404) — bootstrapping a fresh net");
+      }
+    } catch (const std::exception& e) {
+      log(std::string("FATAL: can't read the net (") + e.what() + ") — refusing to start so we don't overwrite the live net.");
+      return 1;
+    }
+  }
+  if (actor && !haveNet) { log("--actor needs an existing net on GitHub — start the learner first."); return 1; }
   std::string workerId = "cpp-" + std::to_string(getpid());
 
   if (actor) {

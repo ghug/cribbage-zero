@@ -6,6 +6,7 @@
 #include "net_io.h"
 #include <optional>
 #include <string>
+#include <stdexcept>
 
 namespace cz {
 
@@ -38,12 +39,15 @@ public:
     return std::make_pair(j.value("games", 0L), j.value("iter", 0));
   }
 
+  // Returns the net JSON on 200, nullopt on a GENUINE 404 (no net yet), and THROWS on any other status /
+  // malformed body. Callers MUST treat a throw as "couldn't read" (refuse to start) — NOT as "start fresh"
+  // — or a transient error would overwrite the live net.
   std::optional<json> pullNet() {
     auto r = http_->get(contents(CKPATH), rawHeaders());
     if (r.status == 404) return std::nullopt;
-    if (r.status != 200) return std::nullopt;
+    if (r.status != 200) throw std::runtime_error("pull net -> " + std::to_string(r.status));
     auto j = json::parse(r.body, nullptr, false);
-    if (j.is_discarded()) return std::nullopt;
+    if (j.is_discarded()) throw std::runtime_error("pull net -> malformed JSON");
     return j;
   }
 
