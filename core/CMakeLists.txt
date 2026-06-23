@@ -40,6 +40,12 @@ target_include_directories(test_orchestration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(test_orchestration PRIVATE Threads::Threads)
 add_test(NAME orchestration COMMAND test_orchestration)
 
+# shared actor loop (core/actor.h) — the loop the Android native worker runs; mock-HTTP unit test
+add_executable(test_actor tests/test_actor.cpp)
+target_include_directories(test_actor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
+target_link_libraries(test_actor PRIVATE Threads::Threads)
+add_test(NAME actor COMMAND test_actor)
+
 # libcurl-backed HTTP (PC). Optional: only when libcurl is available.
 find_package(CURL)
 if(CURL_FOUND)
