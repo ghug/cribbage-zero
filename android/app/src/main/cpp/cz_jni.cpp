@@ -87,10 +87,11 @@ Java_dev_cribbage_zero_NativeBridge_selfPlayBench(JNIEnv* env, jclass, jint pair
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cribbage_zero_NativeBridge_runActor(JNIEnv* env, jclass cls,
     jstring jrepo, jstring jbusUrl, jstring jbusTok, jstring jtoken,
-    jint sims, jint workers, jint pairsPerRound, jint shardMax) {
+    jint sims, jint workers, jint pairsPerRound, jint shardMax, jint refreshMin) {
   jmethodID mid = env->GetStaticMethodID(cls, "httpRequest",
       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
   if (!mid) return env->NewStringUTF("error: NativeBridge.httpRequest not found");
+  jmethodID logMid = env->GetStaticMethodID(cls, "onActorLog", "(Ljava/lang/String;)V");
 
   ActorConfig cfg;
   std::string repo = jstr(env, jrepo);
@@ -100,12 +101,19 @@ Java_dev_cribbage_zero_NativeBridge_runActor(JNIEnv* env, jclass cls,
   cfg.token = jstr(env, jtoken);
   cfg.sims = (int)sims; cfg.workers = (int)workers;
   cfg.pairsPerRound = (int)pairsPerRound; cfg.shardMax = (int)shardMax;
+  cfg.refreshMinSec = refreshMin > 0 ? (int)refreshMin * 60 : 0;   // UI passes minutes; 0 = no throttle
   cfg.seed = (uint32_t)time(nullptr);
   cfg.workerId = "android-" + std::to_string((long)time(nullptr));
 
   JniHttp http(env, cls, mid);
   g_stop = false;
-  long total = runActorLoop(http, cfg, g_stop, [](const std::string& m) { CZLOG("%s", m.c_str()); });
+  // log callback runs on this (the calling Java) thread, so it can hand each line back to Java for the
+  // actor page's live readout, in addition to logcat.
+  auto logFn = [env, cls, logMid](const std::string& m) {
+    CZLOG("%s", m.c_str());
+    if (logMid) { jstring jm = env->NewStringUTF(m.c_str()); env->CallStaticVoidMethod(cls, logMid, jm); env->DeleteLocalRef(jm); }
+  };
+  long total = runActorLoop(http, cfg, g_stop, logFn);
   char buf[96];
   std::snprintf(buf, sizeof buf, "actor finished: %ld games", total);
   CZLOG("%s", buf);

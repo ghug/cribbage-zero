@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Actor</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --red:#c8412b; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:460px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  a { color:var(--gold); }
+  label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
+  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .btns { display:flex; gap:10px; margin:18px 0 8px; }
+  button { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
+  #start { background:var(--good); color:#10331f; } #stop { background:var(--red); color:#fff; }
+  button:disabled { opacity:.45; cursor:default; }
+  #state { text-align:center; color:var(--gold); font:12.5px ui-monospace,Menlo,monospace; min-height:18px; margin:4px 0 6px; }
+  #readout { font:12px/1.55 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.32); border:1px solid var(--line);
+             border-radius:10px; padding:10px 12px; height:200px; overflow:auto; white-space:pre-wrap; margin-top:4px; }
+  .notice { background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:12px; padding:14px 15px; color:var(--mut); font-size:13px; }
+  .notice b { color:var(--ink); }
+  .note { color:var(--mut); font-size:11.5px; margin-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Cribbage Zero — Actor</h1>
+  <p class="sub">Self-play on <b>this device</b> in the background and upload sample shards to the data bus for the
+  learner. Runs as a foreground service with a wake-lock, so it keeps going with the screen off. <a href="dev.html">← tools</a></p>
+
+  <div id="appUI" style="display:none">
+    <label for="api">Data-bus API URL</label>
+    <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.gabrielhug.workers.dev" autocapitalize="off" autocorrect="off" />
+    <label for="tok">Worker token</label>
+    <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember worker token on this device</label>
+    <div class="row" style="margin-top:4px">
+      <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="40" /></div>
+      <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
+      <div><label for="refresh">Refresh net (min)</label><input id="refresh" type="number" min="0" value="10" /></div>
+    </div>
+
+    <div class="btns">
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <div id="state"></div>
+    <div id="readout"></div>
+  </div>
+
+  <div id="browserUI" class="notice" style="display:none">
+    The on-device actor runs only inside the <b>Cribbage Zero app</b> (it needs the native engine + a background
+    service — a browser can't self-play). Install the APK from
+    <a href="https://github.com/ghug/cribbage-zero/releases" target="_blank" rel="noopener">Releases</a>, open it,
+    and come back to this page. To watch the live run, see the <a href="worker.html">Training monitor</a>; to
+    contribute from a PC, run <b>cz_pc</b> — see <a href="dev.html">the tools hub</a>.
+  </div>
+
+  <p class="note">The actor pulls the latest net from GitHub, self-plays, and uploads sample shards to the bus,
+  refreshing the net whenever the learner advances it. The worker token only lets this device append self-play.
+  Version <span id="ver"></span> · public domain (The Unlicense).</p>
+</div>
+
+<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  $("ver").textContent = window.CZ_VERSION;
+
+  if (!window.CZAndroid) { $("browserUI").style.display = "block"; return; }   // browser: show the install notice only
+  $("appUI").style.display = "block";
+
+  // config (shared keys with the monitor so settings carry over). Token persistence is opt-in.
+  $("api").value = localStorage.getItem("az_api") || "https://cribbage-zero-bus.gabrielhug.workers.dev";
+  var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
+  if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
+  if (localStorage.getItem("az_threads")) $("threads").value = localStorage.getItem("az_threads");
+  if (localStorage.getItem("az_refresh")) $("refresh").value = localStorage.getItem("az_refresh");
+  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
+  $("remember").addEventListener("change", persistToken);
+
+  function poll() {
+    var running = false, st = "", log = "";
+    try { running = CZAndroid.isRunning(); st = CZAndroid.status(); log = CZAndroid.log(); } catch (e) {}
+    $("start").disabled = running; $("stop").disabled = !running;
+    $("state").textContent = (running ? "● running" : "○ stopped") + (st ? " — " + st : "");
+    if (log != null && log !== $("readout").dataset.last) {
+      $("readout").dataset.last = log;
+      $("readout").textContent = log;
+      $("readout").scrollTop = $("readout").scrollHeight;   // keep the newest line in view
+    }
+  }
+
+  $("start").addEventListener("click", function () {
+    var api = ($("api").value.trim() || "").replace(/\/+$/, ""), tok = $("tok").value.trim();
+    if (!api || !tok) { $("state").textContent = "enter the bus URL + worker token first"; return; }
+    persistToken(); localStorage.setItem("az_api", api);
+    var sims = Math.max(1, parseInt($("sims").value, 10) || 40), threads = Math.max(1, parseInt($("threads").value, 10) || 2);
+    var refreshMin = Math.max(0, parseInt($("refresh").value, 10) || 0);
+    localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", threads); localStorage.setItem("az_refresh", refreshMin);
+    try {
+      CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, threads, 20, 1500, refreshMin);
+    } catch (e) { $("state").textContent = "start failed: " + e; }
+    poll();
+  });
+  $("stop").addEventListener("click", function () { try { CZAndroid.stopActor(); } catch (e) {} poll(); });
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>

@@ -102,7 +102,7 @@ public class MainActivity extends Activity {
     private final class CzBridge {
         @JavascriptInterface
         public void startActor(String busUrl, String busToken, String token, String repo,
-                               int sims, int workers, int pairs, int shardMax) {
+                               int sims, int workers, int pairs, int shardMax, int refreshMin) {
             Intent i = new Intent(MainActivity.this, SelfPlayService.class);
             i.setAction(SelfPlayService.ACTION_START);
             i.putExtra("busUrl", busUrl);
@@ -113,6 +113,7 @@ public class MainActivity extends Activity {
             i.putExtra("workers", workers);
             i.putExtra("pairs", pairs);
             i.putExtra("shardMax", shardMax);
+            i.putExtra("refreshMin", refreshMin);
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
         }
 
@@ -128,5 +129,8 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String status() { return SelfPlayService.status == null ? "" : SelfPlayService.status; }
+
+        @JavascriptInterface
+        public String log() { return SelfPlayService.getLog(); }
     }
 }

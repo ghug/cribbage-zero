@@ -53,6 +53,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'local.html'      // on-device trainer (default mode)
         include 'worker.html'     // Cloudflare worker mode
         include 'dev.html'        // tools hub
+        include 'actor.html'      // on-device background actor (native engine + foreground service)
         include 'eval.html'       // strength eval (records to the progress branch)
         include 'refresh-trainer.html'  // dispatch the trainer's net-refresh workflow
         include 'release-trainer.html'  // dispatch the trainer's full release (confirms first)

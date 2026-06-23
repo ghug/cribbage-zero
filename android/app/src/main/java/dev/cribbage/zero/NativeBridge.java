@@ -25,10 +25,13 @@ public final class NativeBridge {
      * BLOCKS — call on a background thread. Returns a final status line.
      */
     public static native String runActor(String repo, String busUrl, String busToken, String token,
-                                         int sims, int workers, int pairsPerRound, int shardMax);
+                                         int sims, int workers, int pairsPerRound, int shardMax, int refreshMin);
 
     /** Signal a running actor loop to stop (safe to call from another thread). */
     public static native void stopActor();
+
+    /** Invoked FROM native (on the actor thread) for each progress line — surfaced in the actor page + notification. */
+    public static void onActorLog(String m) { SelfPlayService.pushLog(m); }
 
     /**
      * Perform one HTTP request — invoked FROM native (on the actor thread). Headers arrive as "Key: Value"

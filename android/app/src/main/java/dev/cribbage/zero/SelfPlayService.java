@@ -10,7 +10,10 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.text.TextUtils;
 import android.util.Log;
+
+import java.util.ArrayDeque;
 
 /**
  * Foreground service that runs the native actor ({@link NativeBridge#runActor}) on a background thread, with
@@ -24,9 +27,24 @@ public class SelfPlayService extends Service {
     private static final String CHANNEL = "cz_actor";
     private static final int NOTIF_ID = 1;
 
-    // observed by MainActivity's JS bridge (isRunning / status)
+    // observed by MainActivity's JS bridge (isRunning / status / log)
     public static volatile boolean running = false;
     public static volatile String status = "";
+    // recent progress lines (latest last) for the actor page's live readout — fed by the native log callback
+    private static final ArrayDeque<String> LOG = new ArrayDeque<>();
+
+    public static void pushLog(String m) {
+        synchronized (LOG) { LOG.addLast(m); while (LOG.size() > 16) LOG.removeFirst(); }
+        status = m;
+    }
+
+    public static String getLog() {
+        synchronized (LOG) { return TextUtils.join("\n", LOG); }
+    }
+
+    private static void clearLog() {
+        synchronized (LOG) { LOG.clear(); }
+    }
 
     private Thread worker;
     private PowerManager.WakeLock wake;
@@ -62,20 +80,22 @@ public class SelfPlayService extends Service {
         final int workers = intInt(intent, "workers", 2);
         final int pairs = intInt(intent, "pairs", 20);
         final int shardMax = intInt(intent, "shardMax", 1500);
+        final int refreshMin = intInt(intent, "refreshMin", 10);
 
         running = true;
-        status = "starting…";
+        clearLog();
+        pushLog("starting…");
         startForegroundNotif();
         acquireWake();
 
         worker = new Thread(() -> {
             try {
-                status = "running";
+                pushLog("connecting…");
                 updateNotif();
-                String result = NativeBridge.runActor(repo, busUrl, busToken, token, sims, workers, pairs, shardMax);
-                status = result;
+                String result = NativeBridge.runActor(repo, busUrl, busToken, token, sims, workers, pairs, shardMax, refreshMin);
+                pushLog(result);
             } catch (Throwable t) {
-                status = "error: " + t.getMessage();
+                pushLog("error: " + t.getMessage());
                 Log.e("cz", "actor crashed", t);
             } finally {
                 running = false;
@@ -92,7 +112,7 @@ public class SelfPlayService extends Service {
     private void signalStop() {
         // tell the native loop to finish its current round and return; the worker thread then cleans up.
         try { NativeBridge.stopActor(); } catch (Throwable ignored) {}
-        status = "stopping…";
+        pushLog("stopping…");
         updateNotif();
     }
 

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <chrono>
 
 namespace cz {
 
@@ -23,6 +24,7 @@ struct ActorConfig {
   std::string branch = "net";
   std::string workerId = "actor";
   int sims = 40, workers = 2, pairsPerRound = 20, shardMax = 1500;
+  int refreshMinSec = 0;            // throttle: min seconds between net re-downloads (0 = refresh on every advance)
   uint32_t seed = 12345;
 };
 
@@ -48,6 +50,7 @@ inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<b
   int w = cfg.workers > 0 ? cfg.workers : 2;
   int pr = cfg.pairsPerRound > 0 ? cfg.pairsPerRound : 20;
   int sm = cfg.shardMax > 0 ? cfg.shardMax : 1500;
+  auto lastRefresh = std::chrono::steady_clock::now();
 
   while (!stop) {
     std::vector<Sample> s;
@@ -59,11 +62,12 @@ inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<b
       bus.putShard(chunk, cfg.workerId);
     }
     log("uploaded " + std::to_string(s.size()) + " samples (" + std::to_string(total) + " games so far)");
-    try {   // refresh the net if the learner advanced it (cheap info probe first)
+    try {   // refresh the net if the learner advanced it (cheap info probe first), throttled to bound data use
       auto info = gh.pullInfo();
-      if (info && info->second > iter) {
-        auto n = gh.pullNet();
-        if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) { net = netFromJson(*n); iter = info->second; log("refreshed to net iter " + std::to_string(iter)); }
+      double sinceRefresh = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastRefresh).count();
+      if (info && info->second > iter && sinceRefresh >= cfg.refreshMinSec) {
+        auto n = gh.pullNet();   // the multi-MB net — only re-downloaded past the throttle window
+        if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) { net = netFromJson(*n); iter = info->second; lastRefresh = std::chrono::steady_clock::now(); log("refreshed to net iter " + std::to_string(iter)); }
       }
     } catch (...) { /* a transient refresh failure is non-fatal — keep self-playing on the current net */ }
   }
