@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -51,6 +51,10 @@ int main(int argc, char** argv) {
   std::string busUrl = env("CZ_BUS_URL"), busTok = env("CZ_BUS_TOKEN");
   int pushEvery = envi("CZ_PUSH_GAMES", 10000), bufCap = envi("CZ_BUF", 200000), batch = envi("CZ_BATCH", 256);
   double wd = envf("CZ_WD", 1e-4);   // L2 weight decay
+  // SGD learning rate. momentum (CZ_MOMENTUM, default 0.9) amplifies the effective step ~1/(1-mu) ≈ 10x, so
+  // the per-sample lr must be ~10x lower than plain SGD or the ReLU hidden layers collapse (dead neurons →
+  // constant output). 0.002 with mu=0.9 ≈ an effective 0.02, the pre-momentum value that trained without collapse.
+  double lr = envf("CZ_LR", 0.002);
   const int trainPerSample = 2;
   uint32_t seed = (uint32_t)time(nullptr) ^ (uint32_t)getpid();
   signal(SIGINT, onSigint);
@@ -148,7 +152,7 @@ int main(int argc, char** argv) {
     if (bus) { auto sh = bus->getShards(envi("CZ_BUS_LIMIT", 400)); for (auto& s : sh) { buf.add(s.samples); newSamples += s.samples.size(); pruneIds.push_back(s.id); } }
     int steps = std::max(1, (int)std::lround((double)trainPerSample * newSamples / batch));
     Rng tr(seed * 2654435761u);
-    double loss = trainReplay(net, buf, steps, batch, 0.02, tr, wd, /*augment=*/true);
+    double loss = trainReplay(net, buf, steps, batch, lr, tr, wd, /*augment=*/true);
     iter++; games += played; pushAccum += played;
     if (bus && !pruneIds.empty()) bus->prune(pruneIds);
     char line[160]; std::snprintf(line, sizeof line, "iter %d (%ld games): %ld samples, buf %zu, loss %.3f", iter, games, newSamples, buf.size(), loss);
