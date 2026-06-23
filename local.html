@@ -123,8 +123,27 @@
     if (!Array.isArray(o.W) || o.W.length !== HIDDEN.length || !Array.isArray(o.W[0]) || !Array.isArray(o.W[0][0]) || o.W[0][0].length !== o.nIn) return false;
     return Array.isArray(o.b) && Array.isArray(o.Wv) && Array.isArray(o.Wp) && Array.isArray(o.bp);
   }
-  function loadLocalObj() { try { var o = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(o)) return o; } catch (e) {} return null; }
-  function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(ckObj())); } catch (e) { log("local save failed: " + e.message); } }
+  // --- local checkpoint persistence (IndexedDB) ---
+  // The trained net serializes to ~5 MB — past the ~5 MB localStorage quota — so the crash-safety checkpoint
+  // lives in IndexedDB (hundreds of MB+), stored as a structured-cloned object (no JSON, no precision loss).
+  var DB_NAME = "cribbage-zero", STORE = "ckpt";
+  function openDB() { return new Promise(function (res, rej) { var r = indexedDB.open(DB_NAME, 1); r.onupgradeneeded = function () { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE); }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; }); }
+  var dbHandle = null;
+  var dbReady = openDB().then(function (db) { dbHandle = db; }).catch(function (e) { log("IndexedDB unavailable (" + e.message + ") — local crash-safety save is off; GitHub stays the source of truth"); });
+  function idbGet(key) { return new Promise(function (res, rej) { var rq = dbHandle.transaction(STORE, "readonly").objectStore(STORE).get(key); rq.onsuccess = function () { res(rq.result); }; rq.onerror = function () { rej(rq.error); }; }); }
+  function idbDel(key) { return new Promise(function (res, rej) { var tx = dbHandle.transaction(STORE, "readwrite"); tx.objectStore(STORE).delete(key); tx.oncomplete = function () { res(); }; tx.onerror = function () { rej(tx.error); }; }); }
+  function saveLocalObj(obj) {   // put() structured-clones synchronously here → captures the current net snapshot
+    if (!dbHandle) return;
+    try { var tx = dbHandle.transaction(STORE, "readwrite"); tx.objectStore(STORE).put(obj, KEY); tx.onerror = function () { log("local save failed: " + (tx.error && tx.error.message)); }; }
+    catch (e) { log("local save failed: " + e.message); }
+  }
+  async function loadLocalObj() {
+    try { await dbReady; if (dbHandle) { var o = await idbGet(KEY); if (validCkpt(o)) return o; } } catch (e) {}
+    // one-time migration of an old localStorage checkpoint (pre-IndexedDB builds) into IndexedDB
+    try { var legacy = JSON.parse(localStorage.getItem(KEY)); if (validCkpt(legacy)) { if (dbHandle) { saveLocalObj(legacy); localStorage.removeItem(KEY); } return legacy; } } catch (e) {}
+    return null;
+  }
+  function saveLocal() { saveLocalObj(ckObj()); }
 
   // --- GitHub net branch (orphan force-push = always one commit) ---
   function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
@@ -227,7 +246,7 @@
 
     // check the small info file FIRST — only download the multi-MB net if the cloud is actually newer than local
     setRunning(true); startTime = Date.now(); gamesSession = 0; progress("checking GitHub…");
-    var localO = loadLocalObj();
+    var localO = await loadLocalObj();
     var localGames = (localO && validCkpt(localO)) ? (localO.games || 0) : -1;
     var remoteO = null, info = null;
     try { info = await pullInfo(); } catch (e) { /* info missing/failed → fall through to pulling the net */ }
@@ -258,7 +277,7 @@
   }
   function windDown() { if (!running || winding) return; winding = true; updateButtons(); log("winding down — finishing this iteration, then stopping"); }
   function stop() { finalizeStop(); }
-  async function reset() { if (running) { log("stop first"); return; } if (!(await confirmModal("Reset local net?", "Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.", "Reset"))) return; localStorage.removeItem(KEY); net = freshNet(HIDDEN); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
+  async function reset() { if (running) { log("stop first"); return; } if (!(await confirmModal("Reset local net?", "Reset the net on THIS DEVICE and start fresh?\n\nGitHub's copy is kept — on Start it'll be pulled back, unless you train without a token.", "Reset"))) return; try { await dbReady; if (dbHandle) await idbDel(KEY); } catch (e) {} localStorage.removeItem(KEY); net = freshNet(HIDDEN); iter = 0; totalGames = 0; lastLoss = 0; render(); showStats(); log("local net reset to fresh (GitHub net branch untouched)"); }
 
   // modals
   function open(el) { el.classList.add("open"); } function close(el) { el.classList.remove("open"); }
@@ -278,7 +297,7 @@
   if (localStorage.getItem("cz_sims")) $("sims").value = localStorage.getItem("cz_sims");
   if (localStorage.getItem("cz_effort")) $("effort").value = localStorage.getItem("cz_effort");
   $("effort").addEventListener("change", function () { localStorage.setItem("cz_effort", $("effort").value); });
-  var lo = loadLocalObj(); if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); }
+  loadLocalObj().then(function (lo) { if (lo) { iter = lo.iter || 0; totalGames = lo.games || 0; render(); log("local net: " + totalGames.toLocaleString() + " games trained (iter " + iter + ", syncs with GitHub on Start)"); } });
   $("netinfo").addEventListener("click", refreshNetCount);
   refreshNetCount();   // show the global trained-games count on open (token-less, best-effort)
   $("start").addEventListener("click", start);
