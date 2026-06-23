@@ -71,6 +71,7 @@
 
 <script src="version.js"></script><!-- window.CZ_VERSION -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
+<script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -121,7 +122,7 @@
   async function refresh() {
     status("loading…");
     try {
-      try { var o = await currentNet(); $("netnow").textContent = "· live net: " + (o.games || 0).toLocaleString() + "g (iter " + (o.iter || 0) + ")"; } catch (e) {}
+      try { var c = await CZNet.latest(repo(), token()); if (c) $("netnow").textContent = "· live net: " + (c.games || 0).toLocaleString() + "g (iter " + (c.iter || 0) + ")"; } catch (e) {}
       var items = [];
       try { items = await gh("GET", "/contents/" + DIR + "?ref=" + ARCH); }
       catch (e) { if (e.status !== 404) throw e; }
@@ -147,7 +148,9 @@
     if (busy) return; if (!token()) { status("a token is required to snapshot"); return; }
     busy = true; $("snap").disabled = true; status("snapshotting…");
     try {
-      var text = await currentNetText(), o = JSON.parse(text);
+      var cloud = await CZNet.latest(repo(), token());   // shared last-cloud-net cache (reused across pages)
+      if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
+      var o = cloud.obj, text = JSON.stringify(o);
       if (!validNet(o)) throw new Error("current net looks malformed — not archiving");
       var games = o.games || 0, iter = o.iter || 0, name = games + "g-iter" + iter + "-" + stamp() + ".json";
       // ensure net-archive exists (seed from the current net commit)
@@ -179,6 +182,7 @@
       var tree = await gh("POST", "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.sha }] });
       var commit = await gh("POST", "/git/commits", { message: "rollback: net @ iter " + (o.iter || 0) + " (" + (o.games || 0) + " games) from " + name, tree: tree.sha, parents: [] });
       await gh("PATCH", "/git/refs/heads/" + NET, { sha: commit.sha, force: true });
+      CZNet.setCloud(o, o.iter || 0, o.games || 0);   // the net branch now holds this snapshot → update the shared cache
       log("rolled net back to " + name + " @ " + commit.sha.slice(0, 8));
       status("rolled back ✓"); await refresh();
     } catch (e) { log("error: " + e.message); status("error"); }

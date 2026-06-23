@@ -69,6 +69,7 @@
 <script src="src/winprob.js"></script><!-- winProbHand -->
 <script src="version.js"></script><!-- window.CZ_VERSION -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
+<script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
 <script>
 (function () {   // IIFE so our locals (TARGET, COMBOS6, …) don't collide with the bundle's globals
   var $ = function (id) { return document.getElementById(id); };
@@ -181,9 +182,10 @@
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
       status("pulling net …"); await sleep(0);
-      var ck = JSON.parse(await ghRaw("/repos/" + repo + "/contents/" + CKPATH + "?ref=" + BRANCH));   // raw media type — net is multi-MB (>1MB JSON-inline cap)
-      var net = netFromObj(ck), trained = ck.games || 0;
-      log("net @ " + trained.toLocaleString() + " games — " + games + " balanced games per match");
+      var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages)
+      if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
+      var ck = cloud.obj, net = netFromObj(ck), trained = ck.games || 0;
+      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games per match");
       var vsRand = await runMatch(net, function (g) { return randomLegal(g.decision.slots, rng); }, games, "vs random");
       $("rRand").textContent = vsRand; log("vs random: " + vsRand + "%");
       var vsHard = await runMatch(net, function (g, p) { return hardSlot(g, p); }, games, "vs hard");

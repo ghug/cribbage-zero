@@ -64,6 +64,7 @@
 <script src="version.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>document.getElementById("ver").textContent = window.CZ_VERSION;</script>
+<script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
 <script src="worker/az_bundle.js"></script><!-- provides makeSync() on the main thread -->
 <script>
 (function () {
@@ -130,14 +131,14 @@
     return JSON.parse(await res.text());
   }
   async function pullCheckpoint() {
-    var net = await ghRaw("az_checkpoint.json");
-    if (net) { curIter = net.iter || 0; curNet = netFromObj(net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: net }); }); log("updated to net iter " + curIter); }
-    return net;
+    var r = await CZNet.latest(netRepo, CZ.token());   // shared last-cloud-net cache (reused across pages, no re-download)
+    if (r && r.obj) { var net = r.obj; curIter = r.iter || 0; curNet = netFromObj(net); threads.forEach(function (w) { w.postMessage({ type: "ckpt", obj: net }); }); log("updated to net iter " + curIter + (r.fromCache ? " (cached)" : "")); return net; }
+    return null;
   }
   async function maybeRefreshNet() {            // poll the tiny info file at most every 5 min; refetch the net only if it advanced
     if (Date.now() - lastNetCheck < 300000) return;
     lastNetCheck = Date.now();
-    try { var info = await ghRaw("info.json"); if (info && (info.iter || 0) > curIter) await pullCheckpoint(); } catch (e) {}
+    try { var info = await CZNet.info(netRepo, CZ.token()); if (info && (info.iter || 0) > curIter) await pullCheckpoint(); } catch (e) {}
   }
   async function flush(samples) {
     if (!samples || !samples.length) return;

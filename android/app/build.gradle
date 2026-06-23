@@ -50,6 +50,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'worker/**'       // the engine bundle (az_bundle.js)
         include 'version.js'      // window.CZ_VERSION (shown on dev/local/worker pages)
         include 'chrome.js'       // shared Settings + About menu (window.CZ)
+        include 'netstore.js'     // shared net storage + last-cloud-net cache (window.CZNet)
         include 'src/winprob.js'  // eval.html needs winProbHand
     }
 }
