@@ -14,7 +14,7 @@
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
     ".cz-icon{width:34px;height:34px;border-radius:9px;border:1px solid var(--line,#2f6b4d);background:rgba(0,0,0,.28);",
-      "color:var(--ink,#f3ecd6);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}",
+      "color:var(--ink,#f3ecd6);font-size:16px;line-height:1;cursor:pointer;text-decoration:none;display:flex;align-items:center;justify-content:center}",
     ".cz-icon:hover{border-color:var(--gold,#d6bc7a)}",
     ".cz-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:70;padding:18px}",
     ".cz-overlay.cz-on{display:flex}",
@@ -42,7 +42,8 @@
     document.head.appendChild(style);
 
     var ver = window.CZ_VERSION || "";
-    var icons = node('<div id="cz-icons"><button id="cz-gear" class="cz-icon" type="button" aria-label="Settings">⚙</button>' +
+    var icons = node('<div id="cz-icons"><a id="cz-home" class="cz-icon" href="dev.html" aria-label="Home — dev tools" title="Tools home">⌂</a>' +
+      '<button id="cz-gear" class="cz-icon" type="button" aria-label="Settings">⚙</button>' +
       '<button id="cz-info" class="cz-icon" type="button" aria-label="About">ⓘ</button></div>');
 
     var settings = node('<div id="cz-settings" class="cz-overlay" role="dialog" aria-modal="true" aria-label="Settings"><div class="cz-modal">' +
