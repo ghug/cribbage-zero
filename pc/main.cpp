@@ -3,7 +3,7 @@
 //   ACTOR  (--actor):  pull net -> self-play -> upload shards to the bus -> refresh net when it advances.
 //   --dry: local self-play bench only (no network, no push) — safe to run anywhere.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_BUS_LIMIT.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -27,6 +27,7 @@ static std::atomic<bool> g_stop{false};
 static void onSigint(int) { g_stop = true; }
 static std::string env(const char* k, const std::string& def = "") { const char* v = getenv(k); return v ? std::string(v) : def; }
 static int envi(const char* k, int def) { const char* v = getenv(k); return v && *v ? atoi(v) : def; }
+static double envf(const char* k, double def) { const char* v = getenv(k); return v && *v ? atof(v) : def; }
 static void log(const std::string& m) { std::printf("[cz] %s\n", m.c_str()); std::fflush(stdout); }
 
 int main(int argc, char** argv) {
@@ -39,6 +40,9 @@ int main(int argc, char** argv) {
   int sims = pos.size() > 1 ? atoi(pos[1].c_str()) : envi("CZ_SIMS", 40);
   int pairsPerRound = std::max(1, gamesPerRound / 2);
   double cpuct = 1.5;
+  // AlphaZero self-play exploration: Dirichlet root noise + temperature move-sampling for the opening plies.
+  int tempMoves = envi("CZ_TEMP_MOVES", 30);
+  double dirEps = envf("CZ_DIR_EPS", 0.25), dirAlpha = envf("CZ_DIR_ALPHA", 0.8);
   int workers = envi("CZ_WORKERS", std::max(1, (int)std::thread::hardware_concurrency() - 1));
   std::string repo = env("CZ_REPO", "ghug/cribbage-zero"), token = env("CZ_TOKEN");
   std::string busUrl = env("CZ_BUS_URL"), busTok = env("CZ_BUS_TOKEN");
@@ -52,7 +56,7 @@ int main(int argc, char** argv) {
     log("DRY local self-play: " + std::to_string(pairsPerRound) + " pairs, sims " + std::to_string(sims) + ", workers " + std::to_string(workers));
     auto t0 = std::chrono::steady_clock::now();
     std::vector<Sample> s;
-    long g = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed, s);
+    long g = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed, s, tempMoves, dirEps, dirAlpha);
     double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     char buf[128]; std::snprintf(buf, sizeof buf, "%ld games, %zu samples, %.2fs = %.2f g/s", g, s.size(), dt, g / dt);
     log(buf);
@@ -77,7 +81,7 @@ int main(int argc, char** argv) {
     log("ACTOR: self-play -> bus");
     while (!g_stop) {
       std::vector<Sample> s;
-      parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, s);
+      parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, s, tempMoves, dirEps, dirAlpha);
       for (size_t i = 0; i < s.size(); i += shardMax) {
         std::vector<Sample> chunk(s.begin() + i, s.begin() + std::min(s.size(), i + shardMax));
         bus->putShard(chunk, workerId);
@@ -95,7 +99,7 @@ int main(int argc, char** argv) {
   log("LEARNER: self-play + train + push every " + std::to_string(pushEvery) + " games");
   while (!g_stop) {
     std::vector<Sample> local;
-    long played = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, local);
+    long played = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, local, tempMoves, dirEps, dirAlpha);
     long newSamples = (long)local.size();
     buf.add(local);
     std::vector<long> pruneIds;

@@ -19,6 +19,24 @@ struct MNode {
   std::array<MNode*, NPOL> child{};   // children, null until visited
 };
 
+// Gamma / Dirichlet sampling for AlphaZero root-exploration noise (Marsaglia-Tsang; α<1 via the boost trick).
+inline double sampleNormal(Rng& rng) {
+  double u1 = rng.next(), u2 = rng.next();
+  return std::sqrt(-2.0 * std::log(u1 + 1e-12)) * std::cos(6.283185307179586 * u2);
+}
+inline double sampleGamma(double a, Rng& rng) {
+  if (a < 1.0) return sampleGamma(a + 1.0, rng) * std::pow(rng.next() + 1e-12, 1.0 / a);
+  double d = a - 1.0 / 3.0, c = 1.0 / std::sqrt(9.0 * d);
+  for (;;) {
+    double x = sampleNormal(rng), v = 1.0 + c * x;
+    if (v <= 0) continue;
+    v = v * v * v;
+    double u = rng.next();
+    if (u < 1.0 - 0.0331 * x * x * x * x) return d * v;
+    if (std::log(u + 1e-12) < 0.5 * x * x + d * (1.0 - v + std::log(v))) return d * v;
+  }
+}
+
 struct SearchResult {
   std::array<double, NPOL> policy{};  // visit distribution over the root's own legal slots
   int move = -1;
@@ -27,12 +45,29 @@ struct SearchResult {
 
 class Mcts {
 public:
-  // search from `root` for nSims; rng drives BOTH the per-sim determinization and the in-tree chance steps
-  // (this is the SEARCH rng — kept separate from the real game's deal rng by the caller).
-  SearchResult search(const CribGame& root, const Net& net, int nSims, double cPuct, Rng& rng) {
+  // search from `root` for nSims; rng drives the per-sim determinization, in-tree chance, AND the root
+  // exploration noise (the SEARCH rng — kept separate from the real game's deal rng by the caller).
+  // dirEps>0 mixes Dirichlet(dirAlpha) noise into the root prior (AlphaZero self-play exploration); 0 = off.
+  SearchResult search(const CribGame& root, const Net& net, int nSims, double cPuct, Rng& rng,
+                      double dirEps = 0.0, double dirAlpha = 0.8) {
     arena_.clear();
     int rootPlayer = root.toAct;
     MNode* rnode = newNode();
+    // pre-expand the root (its prior/legals depend only on the root player's own info → determinization-
+    // independent) so we can perturb the prior with Dirichlet noise before the simulations run.
+    {
+      auto legal = root.legalSlots();
+      root.encodeInto(rootPlayer, enc_);
+      float v; net.infer(enc_, sa_, sb_, logits_, v);
+      auto p = Net::softmax(logits_, legal);
+      for (int s = 0; s < NPOL; s++) rnode->P[s] = p[s];
+      rnode->expanded = true;
+      if (dirEps > 0) {
+        double g[NPOL] = {0}, sum = 0;
+        for (int s = 0; s < NPOL; s++) if (legal[s]) { g[s] = sampleGamma(dirAlpha, rng); sum += g[s]; }
+        if (sum > 0) for (int s = 0; s < NPOL; s++) if (legal[s]) rnode->P[s] = (1 - dirEps) * rnode->P[s] + dirEps * (g[s] / sum);
+      }
+    }
     for (int i = 0; i < nSims; i++) {
       CribGame g = root.determinize(rootPlayer, rng);
       simulate(g, rnode, rootPlayer, net, cPuct, rng);
