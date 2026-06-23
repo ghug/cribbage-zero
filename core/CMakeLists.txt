@@ -18,3 +18,7 @@ add_test(NAME scoring COMMAND test_scoring)
 add_executable(test_net tests/test_net.cpp)
 target_include_directories(test_net PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME net COMMAND test_net)
+
+add_executable(test_selfplay tests/test_selfplay.cpp)
+target_include_directories(test_selfplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME selfplay COMMAND test_selfplay)
