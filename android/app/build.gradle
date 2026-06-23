@@ -48,6 +48,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'snapshot.html'         // net snapshots + rollback (net-archive branch)
         include 'progress.html'         // graph of net win% over games trained
         include 'worker/**'       // the engine bundle (az_bundle.js)
+        include 'version.js'      // window.CZ_VERSION (shown on dev/local/worker pages)
         include 'src/winprob.js'  // eval.html needs winProbHand
     }
 }

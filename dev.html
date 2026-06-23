@@ -70,10 +70,10 @@ CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;worker&gt;  node engine/az_contribute.js --actor 
   (src/winprob.js + src/engine.js's pegChooseDeep) — a fixed benchmark that may drift from the shipped one.
   Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
+<script src="version.js"></script>
 <script>
-  // Single source of truth = the repo-root VERSION file (kept in sync by hand; no build step stamps it).
-  // dev: <next-patch>-dev.<n> (bump <n> on every code-changing dev commit); a release drops the -dev.<n> suffix.
-  document.getElementById("ver").textContent = "0.1.32-dev.1";
+  // Version string lives in version.js (window.CZ_VERSION) — the one place to bump it.
+  document.getElementById("ver").textContent = window.CZ_VERSION;
 </script>
 </body>
 </html>
