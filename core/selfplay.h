@@ -16,7 +16,7 @@ namespace cz {
 
 // play one full game to 121; append a sample per decision (z filled from the final outcome). Returns true if
 // the game terminated cleanly. `dealRng` advances the real deals; `searchRng` drives MCTS only.
-inline bool playOneGame(CribGame& game, Net& net, int sims, double cPuct,
+inline bool playOneGame(CribGame& game, const Net& net, int sims, double cPuct,
                         Rng& dealRng, Rng& searchRng, Mcts& mcts, std::vector<Sample>& out) {
   struct Step { std::vector<double> x, pi; std::vector<bool> legal; int player; };
   std::vector<Step> traj;
@@ -38,7 +38,7 @@ inline bool playOneGame(CribGame& game, Net& net, int sims, double cPuct,
 }
 
 // one antithetic pair: same deal seed, opposite initial dealer. Returns true if both games terminated.
-inline bool playMatchPair(Net& net, int sims, double cPuct, uint32_t pairSeed,
+inline bool playMatchPair(const Net& net, int sims, double cPuct, uint32_t pairSeed,
                           Rng& searchRng, Mcts& mcts, std::vector<Sample>& out) {
   Rng dealA(pairSeed); CribGame ga(dealA, /*initialDealer=*/0);
   bool okA = playOneGame(ga, net, sims, cPuct, dealA, searchRng, mcts, out);

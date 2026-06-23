@@ -29,7 +29,7 @@ class Mcts {
 public:
   // search from `root` for nSims; rng drives BOTH the per-sim determinization and the in-tree chance steps
   // (this is the SEARCH rng — kept separate from the real game's deal rng by the caller).
-  SearchResult search(const CribGame& root, Net& net, int nSims, double cPuct, Rng& rng) {
+  SearchResult search(const CribGame& root, const Net& net, int nSims, double cPuct, Rng& rng) {
     arena_.clear();
     int rootPlayer = root.toAct;
     MNode* rnode = newNode();
@@ -52,7 +52,7 @@ private:
   std::deque<MNode> arena_;            // stable addresses across push_back; one tree per search
   MNode* newNode() { arena_.emplace_back(); return &arena_.back(); }
 
-  double simulate(CribGame& g, MNode* node, int rootPlayer, Net& net, double cPuct, Rng& rng) {
+  double simulate(CribGame& g, MNode* node, int rootPlayer, const Net& net, double cPuct, Rng& rng) {
     node->N++;
     if (g.done) { double v = (g.winner == rootPlayer) ? 1.0 : -1.0; node->W += v; return v; }
     if (!node->expanded) {                               // expand + net-evaluate (one new node per sim)

@@ -30,6 +30,13 @@ add_executable(test_netio tests/test_netio.cpp)
 target_include_directories(test_netio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
 add_test(NAME netio COMMAND test_netio)
 
+# orchestration test (mock HTTP; no curl, needs threads for parallel self-play)
+find_package(Threads REQUIRED)
+add_executable(test_orchestration tests/test_orchestration.cpp)
+target_include_directories(test_orchestration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
+target_link_libraries(test_orchestration PRIVATE Threads::Threads)
+add_test(NAME orchestration COMMAND test_orchestration)
+
 # libcurl-backed HTTP (PC). Optional: only when libcurl is available.
 find_package(CURL)
 if(CURL_FOUND)
@@ -37,7 +44,12 @@ if(CURL_FOUND)
   target_include_directories(test_http PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
   target_link_libraries(test_http PRIVATE CURL::libcurl)
   # NOT registered as a ctest — it needs network; run ./build/test_http manually.
-  message(STATUS "libcurl found: building test_http (real HTTP smoke)")
+
+  # the PC learner/actor CLI
+  add_executable(cz_pc ${CMAKE_CURRENT_SOURCE_DIR}/../pc/main.cpp)
+  target_include_directories(cz_pc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${THIRD_PARTY})
+  target_link_libraries(cz_pc PRIVATE CURL::libcurl Threads::Threads)
+  message(STATUS "libcurl found: building test_http + cz_pc")
 else()
-  message(STATUS "libcurl NOT found: skipping the real-HTTP smoke (orchestration still tests via the mock)")
+  message(STATUS "libcurl NOT found: skipping test_http + cz_pc (orchestration still tests via the mock)")
 endif()

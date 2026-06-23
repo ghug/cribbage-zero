@@ -1,0 +1,38 @@
+// buffer.h — bounded replay buffer (sliding window) + decorrelated mini-batch SGD, ported from
+// engine/az_contribute.js trainReplay. Random draws with replacement decorrelate within-game positions.
+#pragma once
+#include "sample.h"
+#include "net.h"
+#include "rng.h"
+#include <deque>
+
+namespace cz {
+
+class ReplayBuffer {
+public:
+  explicit ReplayBuffer(size_t cap) : cap_(cap) {}
+  void add(std::vector<Sample>& items) {
+    for (auto& s : items) buf_.push_back(std::move(s));
+    while (buf_.size() > cap_) buf_.pop_front();   // evict oldest beyond the cap
+  }
+  size_t size() const { return buf_.size(); }
+private:
+  std::deque<Sample> buf_;
+  size_t cap_;
+  friend double trainReplay(Net&, ReplayBuffer&, int, int, double, Rng&);
+};
+
+// `steps` mini-batches of `batch` samples drawn at random WITH replacement
+inline double trainReplay(Net& net, ReplayBuffer& rb, int steps, int batch, double lr, Rng& rng) {
+  if (rb.buf_.empty()) return 0;
+  double loss = 0; long n = 0;
+  for (int s = 0; s < steps; s++)
+    for (int b = 0; b < batch; b++) {
+      const Sample& d = rb.buf_[rng.below((int)rb.buf_.size())];
+      loss += net.trainStep(d.x, d.z, d.pi, d.legal, lr);
+      n++;
+    }
+  return n ? loss / n : 0;
+}
+
+} // namespace cz
