@@ -49,6 +49,22 @@
   </div>
   <div id="updated"></div>
 
+  <!-- APK-only: control the native background actor. Shown only inside the app, where MainActivity injects
+       window.CZAndroid; in a plain browser this panel stays hidden (the browser can't self-play). -->
+  <div id="actorPanel" style="display:none; background:rgba(0,0,0,.26); border:1px solid var(--line); border-radius:14px; padding:14px 15px; margin:14px 0 8px;">
+    <div style="font-size:13px; color:var(--gold); margin-bottom:6px;">On-device actor (this phone)</div>
+    <p style="color:var(--mut); font-size:12px; margin:0 0 10px;">Self-play in the background and upload sample shards to the bus, using the bus URL + token above. Runs as a foreground service with a wake-lock, so it keeps going with the screen off.</p>
+    <div style="display:flex; gap:10px;">
+      <div style="flex:1"><label for="asims">MCTS sims</label><input id="asims" type="number" min="1" value="40" /></div>
+      <div style="flex:1"><label for="aworkers">Threads</label><input id="aworkers" type="number" min="1" value="2" /></div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:12px;">
+      <button id="aStart" style="flex:1; padding:13px; border-radius:11px; border:0; font:600 15px inherit; cursor:pointer; background:var(--good); color:#10331f;">Start</button>
+      <button id="aStop" style="flex:1; padding:13px; border-radius:11px; border:0; font:600 15px inherit; cursor:pointer; background:var(--red); color:#fff;" disabled>Stop</button>
+    </div>
+    <div id="aStatus" style="text-align:center; color:var(--mut); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin-top:8px;"></div>
+  </div>
+
   <p class="note">Everything here is read-only — no token is required to see the net's games/iter (the
   <b>net</b> branch is public). A <b>worker</b> bus token reveals the queue depth; a <b>trainer</b> token also
   reveals the single-writer lease (is a learner running, and which one). To contribute self-play, run the
@@ -119,6 +135,33 @@
   $("refresh").addEventListener("click", refreshAll);
   refreshAll();
   setInterval(refreshAll, 15000);
+
+  // --- APK-only: native background actor controls (window.CZAndroid is injected by MainActivity) ---
+  if (window.CZAndroid) {
+    $("actorPanel").style.display = "block";
+    if (localStorage.getItem("az_sims")) $("asims").value = localStorage.getItem("az_sims");
+    if (localStorage.getItem("az_threads")) $("aworkers").value = localStorage.getItem("az_threads");
+    var pollActor = function () {
+      var running = false, st = "";
+      try { running = CZAndroid.isRunning(); st = CZAndroid.status(); } catch (e) {}
+      $("aStart").disabled = running; $("aStop").disabled = !running;
+      $("aStatus").textContent = (running ? "● running" : "○ stopped") + (st ? " — " + st : "");
+    };
+    $("aStart").addEventListener("click", function () {
+      var api = busBase(), tok = $("tok").value.trim();
+      if (!api || !tok) { $("aStatus").textContent = "enter the bus URL + worker token above first"; return; }
+      persistToken(); localStorage.setItem("az_api", api);
+      var sims = Math.max(1, parseInt($("asims").value, 10) || 40), workers = Math.max(1, parseInt($("aworkers").value, 10) || 2);
+      localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", workers);
+      try {
+        CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, workers, 20, 1500);
+      } catch (e) { $("aStatus").textContent = "start failed: " + e; }
+      pollActor();
+    });
+    $("aStop").addEventListener("click", function () { try { CZAndroid.stopActor(); } catch (e) {} pollActor(); });
+    pollActor();
+    setInterval(pollActor, 3000);
+  }
 })();
 </script>
 </body>
