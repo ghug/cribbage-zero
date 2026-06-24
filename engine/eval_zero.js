@@ -95,6 +95,14 @@ async function gh(method, p, body) {
   if (res.status >= 400) throw new Error(method + " " + p.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
   return j;
 }
+// raw media type — the net is multi-MB, past the contents API's 1MB base64-inline cap (where .content is empty)
+async function ghRaw(p) {
+  const headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "cribbage-zero-eval" };
+  if (TOKEN) headers.Authorization = "Bearer " + TOKEN;
+  const res = await fetch("https://api.github.com" + p, { headers });
+  if (res.status >= 400) throw new Error("GET " + p.split("?")[0] + " -> " + res.status);
+  return res.text();
+}
 async function appendPoint(file, games, pct) {                       // GET file+sha, append a row, PUT back (a commit on `progress`)
   const cur = await gh("GET", "/repos/" + REPO + "/contents/" + file + "?ref=progress");
   const content = unb64(cur.content).replace(/\n*$/, "\n") + games + "," + pct + "\n";
@@ -112,7 +120,7 @@ function confirmRecord(games, vsRand, vsHard) {
 
 (async () => {
   console.log("eval_zero: pulling latest net from " + REPO + " @ net …");
-  const ck = JSON.parse(unb64((await gh("GET", "/repos/" + REPO + "/contents/checkpoints/az_checkpoint.json?ref=net")).content));
+  const ck = JSON.parse(await ghRaw("/repos/" + REPO + "/contents/checkpoints/az_checkpoint.json?ref=net"));
   const net = netFromObj(ck), games = ck.games || 0;
   const seed = (Date.now() ^ 0x5eed) >>> 0;
   console.log("eval_zero: net @ " + games.toLocaleString() + " games — " + (DECKS * 2) + " balanced games per match …");
