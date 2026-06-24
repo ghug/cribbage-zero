@@ -118,7 +118,10 @@ public class SelfPlayService extends Service {
 
     @Override
     public void onDestroy() {
-        signalStop();
+        // Only signal-stop if the loop is still active (e.g. the system is killing us mid-run). A normal
+        // finish already reset `running` and logged "actor finished" — re-signalling here would overwrite
+        // that with a spurious "stopping…".
+        if (running) signalStop();
         releaseWake();
         super.onDestroy();
     }

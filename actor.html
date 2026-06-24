@@ -88,8 +88,10 @@
   function poll() {
     var running = false, st = "", log = "";
     try { running = CZAndroid.isRunning(); st = CZAndroid.status(); log = CZAndroid.log(); } catch (e) {}
-    $("start").disabled = running; $("stop").disabled = !running;
-    $("state").textContent = (running ? "● running" : "○ stopped") + (st ? " — " + st : "");
+    var stopping = !!(st && st.indexOf("stopping") === 0);
+    $("start").disabled = running;
+    $("stop").disabled = !running || stopping;     // disable while winding down so a 2nd tap can't re-signal
+    $("state").textContent = stopping ? "◐ stopping…" : ((running ? "● running" : "○ stopped") + (st ? " — " + st : ""));
     if (log != null && log !== $("readout").dataset.last) {
       $("readout").dataset.last = log;
       $("readout").textContent = log;
