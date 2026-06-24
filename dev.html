@@ -16,6 +16,8 @@
   a { color:var(--gold); }
   .card { display:block; background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:12px; padding:13px 15px; margin:8px 0; text-decoration:none; color:var(--ink); }
   .card:hover { border-color:var(--gold); }
+  .card.disabled { opacity:.45; pointer-events:none; }
+  .card.disabled b::after { content:" · disabled"; color:var(--mut); font-weight:400; font-size:12px; }
   .card b { display:block; font-size:15px; } .card span { color:var(--mut); font-size:12.5px; }
   .tool { background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:12px; padding:12px 15px; margin:8px 0; }
   .tool b { font-size:14px; } .tool p { color:var(--mut); font-size:12.5px; margin:4px 0 8px; }
@@ -34,8 +36,8 @@
   <a class="card" href="eval.html"><b>Evaluate the net →</b><span>eval.html — 10000 balanced games vs random + vs hard; recording to the progress branch is a separate manual approval.</span></a>
   <a class="card" href="progress.html"><b>View progress →</b><span>progress.html — graphs net win% over games trained from the progress branch.</span></a>
   <a class="card" href="snapshot.html"><b>Net snapshots &amp; rollback →</b><span>snapshot.html — archive the net to the net-archive branch, or roll back to a saved snapshot.</span></a>
-  <a class="card" href="refresh-trainer.html"><b>Refresh the game's net →</b><span>refresh-trainer.html — triggers cribbage-trainer's workflow to ship the latest net to its "Zero" bot.</span></a>
-  <a class="card" href="release-trainer.html"><b>Release the game →</b><span>release-trainer.html — launches a full cribbage-trainer release (signed APK). Confirms first.</span></a>
+  <div class="card disabled"><b>Refresh the game's net →</b><span>refresh-trainer.html — disabled for now: the game's Zero bot can't run the current C++ net yet (it needs the zero.js multi-layer port; also the net isn't strong enough to ship).</span></div>
+  <div class="card disabled"><b>Release the game →</b><span>release-trainer.html — disabled for now.</span></div>
 
   <h2>Command-line tools</h2>
 
