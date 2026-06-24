@@ -107,7 +107,7 @@ ctest --test-dir core/build   # C++ core self-tests (scoring, net gradient check
 
 ## 7. Branches & releasing
 **All work lands on `dev`; `main` is the release snapshot.** Versioning mirrors `cribbage-trainer`: on
-`dev`, `version.js` is `<next-patch>-dev.<n>` — the first commit after release `X.Y.Z` is `X.Y.(Z+1)-dev.1`,
+`dev`, `settings.js`'s `CZ_VERSION` is `<next-patch>-dev.<n>` — the first commit after release `X.Y.Z` is `X.Y.(Z+1)-dev.1`,
 and **every code-changing commit bumps `-dev.<n>`** (docs-only commits don't). A release drops the `-dev.<n>`
 suffix, bumps the patch + `android/app/build.gradle` `versionCode`/`versionName`, then pushes `dev` + `main`
 and tags `vX.Y.Z` — the `Worker APK Release` workflow builds + signs the APK and the `Snapshot the net`

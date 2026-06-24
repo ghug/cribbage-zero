@@ -33,7 +33,7 @@
   <p class="sub">Read-only view of the live training run: the net's progress on GitHub, the data-bus queue
   depth, and whether a learner is alive. Self-play now runs in the native <b>cz_pc</b> engine, not the browser.</p>
 
-  <p class="sub" style="margin:-6px 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — set the bus URL and a <b>worker or trainer token</b> in ⚙ Settings to see the queue depth + learner status.</p>
+  <p class="sub" style="margin:-6px 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — add a <b>worker or trainer token</b> in ⚙ Settings to see the queue depth + learner status.</p>
 
   <div class="btns"><button id="refresh">Refresh now</button></div>
 
@@ -52,7 +52,7 @@
   <p class="note" style="margin-top:10px">Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 
-<script src="version.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
+<script src="settings.js"></script><!-- window.CZ_VERSION (single source of truth for the version) -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
 <script>

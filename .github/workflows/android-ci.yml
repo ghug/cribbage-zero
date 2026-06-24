@@ -43,7 +43,7 @@ jobs:
       - name: Stamp the dev version (honest versionName + distinct versionCode)
         run: |
           set -euo pipefail
-          DEV=$(grep -oE '"[0-9][^"]*"' version.js | head -1 | tr -d '"')   # e.g. 0.1.37-dev.5 (from version.js)
+          DEV=$(grep CZ_VERSION settings.js | grep -oE '"[^"]*"' | tr -d '"')   # e.g. 0.1.37-dev.5 (from settings.js)
           SHA=$(git rev-parse --short HEAD)
           BASE_VC=$(grep -oE 'versionCode [0-9]+' android/app/build.gradle | grep -oE '[0-9]+')
           DEV_VC=$((BASE_VC + 1))   # next release's code: > the last release, == the eventual v-next (reinstalls cleanly)

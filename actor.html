@@ -34,7 +34,7 @@
   learner. Runs as a foreground service with a wake-lock, so it keeps going with the screen off. <a href="dev.html">← tools</a></p>
 
   <div id="appUI" style="display:none">
-    <p class="sub" style="margin:0 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — set the bus URL and your <b>worker token</b> in ⚙ Settings.</p>
+    <p class="sub" style="margin:0 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — set your <b>worker token</b> in ⚙ Settings.</p>
     <div class="row" style="margin-top:4px">
       <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="40" /></div>
       <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
@@ -63,7 +63,7 @@
   Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 
-<script src="version.js"></script><!-- window.CZ_VERSION -->
+<script src="settings.js"></script><!-- window.CZ_VERSION -->
 <script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
 <script>
 (function () {
@@ -96,7 +96,7 @@
 
   $("start").addEventListener("click", function () {
     var api = (window.CZ && CZ.busUrl()) || "", tok = (window.CZ && CZ.workerToken()) || "";
-    if (!api || !tok) { $("state").textContent = "set the bus URL + worker token in ⚙ Settings first"; return; }
+    if (!api || !tok) { $("state").textContent = "set your worker token in ⚙ Settings first"; return; }
     var sims = Math.max(1, parseInt($("sims").value, 10) || 40), threads = Math.max(1, parseInt($("threads").value, 10) || 2);
     var refreshMin = Math.max(0, parseInt($("refresh").value, 10) || 0);
     var notify = $("notify").checked;

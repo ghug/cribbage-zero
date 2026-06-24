@@ -1,16 +1,16 @@
 /* chrome.js — shared top-right Settings + About menu for every Cribbage Zero page.
  *
- * No build step: each page just loads <script src="version.js"></script><script src="chrome.js"></script>.
- * It injects the fixed ⚙ / ⓘ buttons and the Settings + About modals (identical on every page) and owns the
- * GLOBAL settings used across pages — the GitHub token (localStorage "cz_token", opt-in remember) and the
- * repo (localStorage "cz_repo"). Page-specific knobs stay as inline inputs on each page. Pages read the
- * globals via window.CZ.token() / window.CZ.repo(). Styles/classes are namespaced (cz-*) so they can't clash
- * with a host page's own CSS, and use the shared theme vars (with fallbacks) so it looks the same everywhere.
+ * No build step: each page just loads <script src="settings.js"></script><script src="chrome.js"></script>.
+ * It injects the fixed ⚙ / ⓘ buttons and the Settings + About modals (identical on every page). The repo and
+ * data-bus URL are app config in settings.js (window.CZ_REPO / window.CZ_BUS_URL); this menu owns only the
+ * three credentials (GitHub / worker / trainer tokens). Pages read everything via window.CZ.token() /
+ * .workerToken() / .trainerToken() / .repo() / .busUrl(). Styles/classes are namespaced (cz-*) so they can't
+ * clash with a host page's own CSS, and use the shared theme vars (with fallbacks) so it looks the same everywhere.
  */
 (function () {
   "use strict";
-  var REPO_DEFAULT = "ghug/cribbage-zero";
-  var BUS_DEFAULT = "https://cribbage-zero-bus.gabrielhug.workers.dev";
+  var REPO_DEFAULT = window.CZ_REPO || "ghug/cribbage-zero";          // app config — set in settings.js
+  var BUS_DEFAULT = window.CZ_BUS_URL || "https://cribbage-zero-bus.gabrielhug.workers.dev";
 
   // A credential held in a closure var (seeded from a remembered copy) — NEVER in the input's value, so the
   // secret never sits in the DOM where any element / script / screenshot / autofill could read it. The input is
@@ -80,7 +80,8 @@
     ".cz-full{width:100%;margin-top:14px}",
     ".cz-modal a{color:var(--gold,#d6bc7a)}",
     ".cz-modal p{color:var(--mut,#a9c4b3);font-size:13px}",
-    ".cz-sub{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold,#d6bc7a);margin:16px 0 2px;border-top:1px solid var(--line,#2f6b4d);padding-top:12px}",
+    ".cz-cfg{font-size:12px;color:var(--mut,#a9c4b3);margin:0;word-break:break-all}.cz-cfg b{color:var(--ink,#f3ecd6);font-weight:600}",
+    ".cz-sub{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold,#d6bc7a);margin:14px 0 2px;border-top:1px solid var(--line,#2f6b4d);padding-top:12px}",
     ".cz-tokmeta{display:flex;align-items:center;gap:10px;margin:5px 0 2px}",
     ".cz-tokmeta .cz-check{margin:0;flex:0 0 auto}",
     ".cz-tokstate{flex:1 1 auto;font-size:12px;color:var(--mut,#a9c4b3)}",
@@ -106,10 +107,7 @@
 
     var settings = node('<div id="cz-settings" class="cz-overlay" role="dialog" aria-modal="true" aria-label="Settings"><div class="cz-modal">' +
       '<div class="cz-modal-head"><h2>Settings</h2><button class="cz-done" type="button" data-close>Done</button></div>' +
-      '<label for="cz-repo">Repo (owner/name)</label>' +
-      '<input id="cz-repo" type="text" placeholder="' + REPO_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
-      '<label for="cz-bus">Data-bus URL</label>' +
-      '<input id="cz-bus" type="text" placeholder="' + BUS_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
+      '<p class="cz-cfg">Repo <b>' + REPO_DEFAULT + '</b> · bus <b>' + BUS_DEFAULT.replace(/^https?:\/\//, "") + '</b></p>' +
       '<div class="cz-sub">Tokens</div>' +
       tokenHtml("cz-token", "cz-remember", "cz-token-state", "cz-token-clear", "GitHub token (Contents: write)", "ghp_… — blank = read-only") +
       tokenHtml("cz-wtok", "cz-wremember", "cz-wtok-state", "cz-wtok-clear", "Worker token (append self-play)", "worker token — append self-play") +
@@ -128,21 +126,13 @@
 
     document.body.appendChild(icons); document.body.appendChild(settings); document.body.appendChild(about);
 
-    var repoIn = document.getElementById("cz-repo"), busIn = document.getElementById("cz-bus");
-    repoIn.value = localStorage.getItem("cz_repo") || REPO_DEFAULT;
-    busIn.value = localStorage.getItem("cz_bus_url") || BUS_DEFAULT;
-
-    function persistRepo() { localStorage.setItem("cz_repo", repoIn.value.trim() || REPO_DEFAULT); }
-    function persistBus() { localStorage.setItem("cz_bus_url", busIn.value.trim() || BUS_DEFAULT); }
     gitTok.wire(); workerTok.wire(); trainerTok.wire();   // all tokens: empty write-only inputs + presence labels, never pre-filled
-    repoIn.addEventListener("change", persistRepo);
-    busIn.addEventListener("change", persistBus);
 
     function show(o) { o.classList.add("cz-on"); } function hide(o) { o.classList.remove("cz-on"); }
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
     document.getElementById("cz-info").addEventListener("click", function () { show(about); });
     document.getElementById("cz-openabout").addEventListener("click", function () { hide(settings); show(about); });
-    function commitAll() { gitTok.commit(); workerTok.commit(); trainerTok.commit(); persistRepo(); persistBus(); }
+    function commitAll() { gitTok.commit(); workerTok.commit(); trainerTok.commit(); }
     [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { commitAll(); hide(o); } }); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { commitAll(); hide(settings); hide(about); } });
   }
@@ -154,12 +144,9 @@
     workerToken: function () { return workerTok.get(); },     // data-bus worker token (append self-play)
     trainerToken: function () { return trainerTok.get(); },   // data-bus trainer token (drain + learner lease)
     busToken: function () { return workerTok.get() || trainerTok.get(); },   // either works for read-only bus monitoring
-    repo: function () { var i = document.getElementById("cz-repo"); return (i && i.value.trim()) || localStorage.getItem("cz_repo") || REPO_DEFAULT; },
-    busUrl: function () { var i = document.getElementById("cz-bus"); return ((i && i.value.trim()) || localStorage.getItem("cz_bus_url") || BUS_DEFAULT).replace(/\/+$/, ""); },
-    persist: function () { gitTok.commit(); workerTok.commit(); trainerTok.commit();   // capture+wipe typed tokens, mirror per "remember"
-      var p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
-      if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT);
-      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT); },
+    repo: function () { return REPO_DEFAULT; },                  // app config (settings.js)
+    busUrl: function () { return BUS_DEFAULT.replace(/\/+$/, ""); },
+    persist: function () { gitTok.commit(); workerTok.commit(); trainerTok.commit(); },   // capture+wipe typed tokens, mirror per "remember"
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
