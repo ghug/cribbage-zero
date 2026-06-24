@@ -41,18 +41,25 @@ function train(net, data, epochs, lr, rng) {
   return loss / Math.max(1, n);
 }
 
-// net (greedy on its raw policy) vs a random player; seats swapped each game
-function evalVsRandom(net, games, rng) {
+// net (greedy on its raw policy) vs a random player, ANTITHETIC: each deal is played TWICE with the net on
+// opposite seats (same deal-RNG seed, independent move-RNG), so deal luck cancels across the pair and the
+// win% estimate has far lower variance. `pairs` deals -> 2*pairs games; deal seeds drawn from `rng`.
+function evalVsRandom(net, pairs, rng) {
   let wins = 0;
-  for (let gi = 0; gi < games; gi++) {
-    const g = new CribGame(rng), netSeat = gi & 1; let guard = 0;
-    while (!g.done && guard++ < 4000) {
-      const p = g.toAct, legal = g.decision.slots;
-      g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : randomLegal(legal, rng));
+  for (let pi = 0; pi < pairs; pi++) {
+    const dealSeed = (rng() * 4294967296) >>> 0;
+    for (let half = 0; half < 2; half++) {
+      const dealRng = makeRng(dealSeed);                                      // SAME deal both halves
+      const moveRng = makeRng((dealSeed ^ (0x9e3779b9 * (half + 1))) >>> 0);  // independent move noise
+      const g = new CribGame(dealRng), netSeat = half; let guard = 0;
+      while (!g.done && guard++ < 4000) {
+        const p = g.toAct, legal = g.decision.slots;
+        g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : randomLegal(legal, moveRng));
+      }
+      if (g.winner === netSeat) wins++;
     }
-    if (g.winner === netSeat) wins++;
   }
-  return wins / games;
+  return wins / (pairs * 2);
 }
 
 /* ---- net (de)serialization + atomic checkpoint/shard I/O ---- */

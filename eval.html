@@ -120,22 +120,29 @@
     return slot;
   }
 
-  // net side plays greedy (sims=0) or via MCTS (sims>0) vs an opponent slot-fn; seats swapped each game; yields to keep the UI alive
-  function netMove(net, g, p, legal) {
-    return sims > 0 ? search(g, net, sims, CPUCT, rng).move : argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal);
+  // net side plays greedy (sims=0) or via MCTS (sims>0) vs an opponent slot-fn; yields to keep the UI alive
+  function netMove(net, g, p, legal, moveRng) {
+    return sims > 0 ? search(g, net, sims, CPUCT, moveRng).move : argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal);
   }
-  async function runMatch(net, oppFn, games, label) {
+  // ANTITHETIC: each deal played twice with the net on opposite seats (same deal-RNG, independent move-RNG),
+  // so deal luck cancels across the pair -> far lower-variance win%. `pairs` deals -> 2*pairs games.
+  async function runMatch(net, oppFn, pairs, label) {
     var wins = 0;
-    for (var gi = 0; gi < games; gi++) {
-      var g = new CribGame(rng), netSeat = gi & 1, guard = 0;
-      while (!g.done && guard++ < 4000) {
-        var p = g.toAct, legal = g.decision.slots;
-        g.step(p === netSeat ? netMove(net, g, p, legal) : oppFn(g, p));
+    for (var pi = 0; pi < pairs; pi++) {
+      var dealSeed = (rng() * 4294967296) >>> 0;
+      for (var half = 0; half < 2; half++) {
+        var dealRng = makeRng(dealSeed);                                      // SAME deal both halves
+        var moveRng = makeRng((dealSeed ^ (0x9e3779b9 * (half + 1))) >>> 0);  // independent move noise
+        var g = new CribGame(dealRng), netSeat = half, guard = 0;
+        while (!g.done && guard++ < 4000) {
+          var p = g.toAct, legal = g.decision.slots;
+          g.step(p === netSeat ? netMove(net, g, p, legal, moveRng) : oppFn(g, p, moveRng));
+        }
+        if (g.winner === netSeat) wins++;
       }
-      if (g.winner === netSeat) wins++;
-      if (gi % 25 === 0) { status(label + " " + gi + "/" + games + (sims > 0 ? " · " + sims + " sims" : "") + " …"); await sleep(0); }
+      if (pi % 25 === 0) { status(label + " " + pi + "/" + pairs + " pairs" + (sims > 0 ? " · " + sims + " sims" : "") + " …"); await sleep(0); }
     }
-    return +(100 * wins / games).toFixed(1);
+    return +(100 * wins / (pairs * 2)).toFixed(1);
   }
 
   // --- GitHub ---
@@ -181,7 +188,7 @@
   function recordable(r) { return !!r && r.testGames >= 10000 && r.sims === 0; }
   function refreshRec(b) { $("recRand").disabled = b || !recordable(results.random); $("recHard").disabled = b || !recordable(results.hard); }
   function setBusyUI(b) { $("runRand").disabled = b; $("runHard").disabled = b; refreshRec(b); }
-  function oppOf(which) { return which === "random" ? function (g) { return randomLegal(g.decision.slots, rng); } : function (g, p) { return hardSlot(g, p); }; }
+  function oppOf(which) { return which === "random" ? function (g, p, moveRng) { return randomLegal(g.decision.slots, moveRng); } : function (g, p, moveRng) { return hardSlot(g, p); }; }
 
   // run ONE opponent's evaluation, independent of the other; never records
   async function runOne(which) {
@@ -199,7 +206,7 @@
       if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
       var ck = cloud.obj, net = netFromObj(ck), trained = ck.games || 0;
       log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label);
-      var pct = await runMatch(net, oppOf(which), games, label);
+      var pct = await runMatch(net, oppOf(which), decks, label);   // decks = antithetic pairs (each = 2 games)
       $(resEl).textContent = pct; log(label + ": " + pct + "%");
       results[which] = { games: trained, pct: pct, testGames: games, sims: sims };
       status("done — " + label + (recordable(results[which]) ? " · recordable" : " · not recordable (need ≥ 10000 games & sims = 0)"));

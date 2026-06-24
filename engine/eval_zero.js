@@ -70,17 +70,23 @@ function hardSlot(g, player) {
 }
 
 // net (greedy policy) vs the HARD bot; seats swapped each game — the vs-hard twin of az_common.evalVsRandom
-function evalVsHard(net, games, rng) {
+// ANTITHETIC (like evalVsRandom): each deal played twice with the net on opposite seats. The hard bot and the
+// greedy net are deterministic, so the deal-RNG seed is all that's shared across the pair. `pairs` -> 2*pairs games.
+function evalVsHard(net, pairs, rng) {
   let wins = 0;
-  for (let gi = 0; gi < games; gi++) {
-    const g = new CribGame(rng), netSeat = gi & 1; let guard = 0;
-    while (!g.done && guard++ < 4000) {
-      const p = g.toAct, legal = g.decision.slots;
-      g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : hardSlot(g, p));
+  for (let pi = 0; pi < pairs; pi++) {
+    const dealSeed = (rng() * 4294967296) >>> 0;
+    for (let half = 0; half < 2; half++) {
+      const dealRng = makeRng(dealSeed);                  // SAME deal both halves
+      const g = new CribGame(dealRng), netSeat = half; let guard = 0;
+      while (!g.done && guard++ < 4000) {
+        const p = g.toAct, legal = g.decision.slots;
+        g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : hardSlot(g, p));
+      }
+      if (g.winner === netSeat) wins++;
     }
-    if (g.winner === netSeat) wins++;
   }
-  return wins / games;
+  return wins / (pairs * 2);
 }
 
 // --- GitHub: pull the net; append a point to a CSV on the progress branch ---
@@ -123,10 +129,10 @@ function confirmRecord(games, vsRand, vsHard) {
   const ck = JSON.parse(await ghRaw("/repos/" + REPO + "/contents/checkpoints/az_checkpoint.json?ref=net"));
   const net = netFromObj(ck), games = ck.games || 0;
   const seed = (Date.now() ^ 0x5eed) >>> 0;
-  console.log("eval_zero: net @ " + games.toLocaleString() + " games — " + (DECKS * 2) + " balanced games per match …");
-  const vsRand = +(100 * evalVsRandom(net, DECKS * 2, makeRng(seed))).toFixed(1);
+  console.log("eval_zero: net @ " + games.toLocaleString() + " games — " + DECKS + " antithetic pairs = " + (DECKS * 2) + " games per match …");
+  const vsRand = +(100 * evalVsRandom(net, DECKS, makeRng(seed))).toFixed(1);
   console.log("  vs RANDOM: " + vsRand + "%");
-  const vsHard = +(100 * evalVsHard(net, DECKS * 2, makeRng(seed))).toFixed(1);
+  const vsHard = +(100 * evalVsHard(net, DECKS, makeRng(seed))).toFixed(1);
   console.log("  vs HARD:   " + vsHard + "%");
 
   if (DRY) { console.log("eval_zero: [dry] not recorded"); return; }
