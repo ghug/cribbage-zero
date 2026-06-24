@@ -21,6 +21,9 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
 
+    /** Set by the actor notification's PendingIntent — asks us to surface the actor page (if it's still running). */
+    public static final String EXTRA_OPEN_ACTOR = "openActor";
+
     private WebView web;
 
     @Override
@@ -63,13 +66,36 @@ public class MainActivity extends Activity {
             }
         });
 
+        boolean openActor = wantsActor(getIntent());
         if (savedInstanceState != null) {
             web.restoreState(savedInstanceState);
+            if (openActor) web.loadUrl(ACTOR_URL);             // tapped the notification → jump to the actor page
         } else {
-            web.loadUrl("file:///android_asset/index.html");   // routes to the saved mode (trainer / worker)
+            // launched from the actor notification while it's running → go straight to the actor page,
+            // otherwise the tools hub (index.html routes to the saved mode).
+            web.loadUrl(openActor ? ACTOR_URL : "file:///android_asset/index.html");
         }
 
         setContentView(web);
+    }
+
+    private static final String ACTOR_URL = "file:///android_asset/actor.html";
+
+    /** True when the launch intent is the actor notification AND the actor is still running. */
+    private static boolean wantsActor(Intent intent) {
+        return intent != null && intent.getBooleanExtra(EXTRA_OPEN_ACTOR, false) && SelfPlayService.running;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        // singleTop: the activity (and its loaded WebView page) is reused. Only navigate when the notification
+        // tap asks for the actor page and the actor is still running; otherwise leave the current page as-is.
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (web != null && wantsActor(intent)) {
+            String url = web.getUrl();
+            if (url == null || !url.endsWith("actor.html")) web.loadUrl(ACTOR_URL);
+        }
     }
 
     @Override

@@ -3,6 +3,7 @@ package dev.cribbage.zero;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -148,8 +149,20 @@ public class SelfPlayService extends Service {
         return b.setContentTitle("Cribbage Zero — self-play")
                 .setContentText(status == null || status.isEmpty() ? "running" : status)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentIntent(openActorIntent())
                 .setOngoing(true)
                 .build();
+    }
+
+    // Tapping the notification reopens MainActivity (singleTop → reuses the existing WebView/page) and asks it
+    // to show the actor page. MainActivity only navigates if the actor is still running; otherwise it just
+    // surfaces whatever page was already loaded.
+    private PendingIntent openActorIntent() {
+        Intent i = new Intent(this, MainActivity.class)
+                .setAction(Intent.ACTION_MAIN)
+                .putExtra(MainActivity.EXTRA_OPEN_ACTOR, true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        return PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
     // ---- wake lock ----
