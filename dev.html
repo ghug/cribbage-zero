@@ -60,11 +60,11 @@ node engine/snapshot_net.js --rollback NAME  # restore (asks y/N)</pre></div>
     <b>learner</b> it trains a bounded <b>replay buffer</b> with shuffled mini-batches, drains the data bus, and pushes
     the net every ~10k games (+ wind-down). With <code>--actor</code> it only self-plays and uploads sample shards to
     the bus. One learner, many actors — see <a href="https://github.com/ghug/cribbage-zero/blob/main/docs/BUS.md" target="_blank" rel="noopener">docs/BUS.md</a>.</p>
-    <pre>cmake -B core/build -S core && cmake --build core/build -j   # build cz_pc (needs libcurl)
-export CZ_TOKEN=****                                         # GitHub PAT (Contents: read+write)
+    <pre>export CZ_TOKEN=****                                         # GitHub PAT (Contents: read+write)
 export CZ_BUS_URL=https://cribbage-zero-bus.gabrielhug.workers.dev
 export CZ_BUS_TOKEN=****                                     # trainer token (learner) / worker token (actor)
 
+cmake -B core/build -S core && cmake --build core/build -j   # build cz_pc (needs libcurl)
 core/build/cz_pc [gamesPerRound=500] [sims=40]   # learner — uses the bus if CZ_BUS_* are set (unset them for solo)
 core/build/cz_pc --actor                         # actor (needs CZ_BUS_*; CZ_TOKEN optional)
 core/build/cz_pc --dry                           # local bench, no network (--fresh to start over)
