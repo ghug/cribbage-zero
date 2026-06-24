@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_REFRESH_MIN CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -65,6 +65,7 @@ Environment:
   CZ_BUF           replay-buffer capacity        (default 200000)
   CZ_PUSH_GAMES    push the net every N games    (default 10000)
   CZ_SHARD_MAX     samples per uploaded shard    (default 1500)
+  CZ_REFRESH_MIN   actor: min minutes between net re-downloads  (default 0 = on every advance)
   CZ_BUS_LIMIT     shards drained per round      (default 400)
   CZ_LEASE_TTL_MS  learner-lease TTL in ms       (default 600000)
   CZ_TEMP_MOVES    temperature-sampled opening plies  (default 30)
@@ -165,6 +166,8 @@ int main(int argc, char** argv) {
   if (actor) {
     if (!bus) { log("--actor needs CZ_BUS_URL + CZ_BUS_TOKEN"); return 1; }
     int shardMax = envi("CZ_SHARD_MAX", 1500);
+    double refreshMin = envf("CZ_REFRESH_MIN", 0);   // min minutes between net re-downloads (0 = refresh on every advance)
+    auto lastRefresh = std::chrono::steady_clock::now();
     log("ACTOR: self-play -> bus");
     while (!g_stop) {
       std::vector<Sample> s;
@@ -175,7 +178,11 @@ int main(int argc, char** argv) {
       }
       log("uploaded " + std::to_string(s.size()) + " samples");
       auto info = gh.pullInfo();
-      if (info && info->second > iter) { auto n = gh.pullNet(); if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) { net = netFromJson(*n); iter = info->second; log("refreshed to iter " + std::to_string(iter)); } }
+      double sinceRefresh = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastRefresh).count();
+      if (info && info->second > iter && sinceRefresh >= refreshMin * 60.0) {   // throttle the multi-MB net re-download
+        auto n = gh.pullNet();
+        if (n && validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) { net = netFromJson(*n); iter = info->second; lastRefresh = std::chrono::steady_clock::now(); log("refreshed to iter " + std::to_string(iter)); }
+      }
     }
     return 0;
   }
