@@ -42,28 +42,34 @@
   <div class="tool"><b>Evaluate &amp; record strength</b>
     <p>Plays 10000 balanced games vs random + 10000 vs the hard bot, then <b>asks before</b> appending a point to
     progress-random.csv / progress-hard.csv on the <code>progress</code> branch (y/N). Recording needs ≥ 10000 games.</p>
-    <pre>CZ_TOKEN=&lt;github-pat&gt; node engine/eval_zero.js [decks=5000]   # prompts before recording
-node engine/eval_zero.js --dry          # eval &amp; print, never record
-CZ_TOKEN=&lt;pat&gt; node engine/eval_zero.js --yes      # approve non-interactively</pre></div>
+    <pre>CZ_TOKEN=****          # GitHub PAT (Contents: read+write)
+CZ_TOKEN=${CZ_TOKEN} node engine/eval_zero.js [decks=5000]   # prompts before recording
+node engine/eval_zero.js --dry                              # eval &amp; print, never record
+CZ_TOKEN=${CZ_TOKEN} node engine/eval_zero.js --yes         # approve non-interactively</pre></div>
 
   <div class="tool"><b>Snapshot / roll back the net</b>
     <p>Archive the current net to <code>net-archive</code> (a restore point), list snapshots, or roll one back
     onto the live <code>net</code> branch. The net branch itself keeps no history, so these are your backups.</p>
-    <pre>CZ_TOKEN=&lt;pat&gt; node engine/snapshot_net.js                    # archive now
+    <pre>CZ_TOKEN=****          # GitHub PAT
+CZ_TOKEN=${CZ_TOKEN} node engine/snapshot_net.js                # archive now
 node engine/snapshot_net.js --list                             # list snapshots
-CZ_TOKEN=&lt;pat&gt; node engine/snapshot_net.js --rollback &lt;name&gt;   # restore (asks y/N)</pre></div>
+CZ_TOKEN=${CZ_TOKEN} node engine/snapshot_net.js --rollback NAME   # restore (asks y/N)</pre></div>
 
   <div class="tool"><b>Contribute self-play from a computer (learner / actor) — native C++ (cz_pc)</b>
     <p>Multi-core headless self-play, in C++ (the JS <code>engine/az_contribute.js</code> path is retired). As the
     <b>learner</b> it trains a bounded <b>replay buffer</b> with shuffled mini-batches, drains the data bus, and pushes
     the net every ~10k games (+ wind-down). With <code>--actor</code> it only self-plays and uploads sample shards to
     the bus. One learner, many actors — see <a href="https://github.com/ghug/cribbage-zero/blob/main/docs/BUS.md" target="_blank" rel="noopener">docs/BUS.md</a>.</p>
-    <pre>cmake -B core/build -S core && cmake --build core/build -j        # build cz_pc (needs libcurl)
-CZ_TOKEN=&lt;pat&gt; core/build/cz_pc [gamesPerRound=500] [sims=40]       # learner (solo)
-CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;trainer&gt; CZ_TOKEN=&lt;pat&gt; core/build/cz_pc # learner + bus
-CZ_BUS_URL=.. CZ_BUS_TOKEN=&lt;worker&gt;  CZ_TOKEN=&lt;pat&gt; core/build/cz_pc --actor   # actor
-core/build/cz_pc --dry            # local self-play bench (no network) · --fresh to start over
-# env: CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_WORKERS CZ_SHARD_MAX CZ_BUS_LIMIT CZ_MOMENTUM CZ_WD CZ_DIR_EPS CZ_FPU CZ_BRANCH</pre></div>
+    <pre>cmake -B core/build -S core && cmake --build core/build -j   # build cz_pc (needs libcurl)
+CZ_TOKEN=****                                                # GitHub PAT (Contents: read+write)
+CZ_BUS_URL=https://cribbage-zero-bus.gabrielhug.workers.dev  # the data bus
+CZ_BUS_TOKEN=****                                            # trainer token (learner) / worker token (actor)
+
+CZ_TOKEN=${CZ_TOKEN} core/build/cz_pc [gamesPerRound=500] [sims=40]                          # learner (solo)
+CZ_TOKEN=${CZ_TOKEN} CZ_BUS_URL=${CZ_BUS_URL} CZ_BUS_TOKEN=${CZ_BUS_TOKEN} core/build/cz_pc            # learner + bus
+CZ_BUS_URL=${CZ_BUS_URL} CZ_BUS_TOKEN=${CZ_BUS_TOKEN} core/build/cz_pc --actor               # actor (no GitHub token)
+core/build/cz_pc --dry                                       # local bench (no network) · --fresh to start over
+# more env: CZ_WORKERS CZ_LR CZ_SIMS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SHARD_MAX CZ_BUS_LIMIT CZ_MOMENTUM CZ_WD CZ_BRANCH</pre></div>
 
   <p class="note">eval_zero.js's hard bot is a <b>vendored snapshot</b> of the cribbage-trainer heuristic
   (src/winprob.js + src/engine.js's pegChooseDeep).
