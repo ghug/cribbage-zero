@@ -48,6 +48,7 @@
   }
   var gitTok = tokenField({ storeKey: "cz_token", inputId: "cz-token", rememberId: "cz-remember", stateId: "cz-token-state", clearId: "cz-token-clear", placeholderEmpty: "ghp_… — leave blank for read-only" });
   var workerTok = tokenField({ storeKey: "cz_worker_token", legacyKey: "az_tok", inputId: "cz-wtok", rememberId: "cz-wremember", stateId: "cz-wtok-state", clearId: "cz-wtok-clear", placeholderEmpty: "worker token — to contribute self-play" });
+  var trainerTok = tokenField({ storeKey: "cz_trainer_token", inputId: "cz-ttok", rememberId: "cz-tremember", stateId: "cz-ttok-state", clearId: "cz-ttok-clear", placeholderEmpty: "trainer token — drain the bus / learner lease" });
 
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
@@ -106,6 +107,10 @@
       '<input id="cz-wtok" type="password" placeholder="worker token — to contribute self-play" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
       '<label class="cz-check"><input id="cz-wremember" type="checkbox" /> Remember worker token on this device (otherwise in-memory only)</label>' +
       '<div class="cz-tokrow"><span id="cz-wtok-state" class="cz-tokstate"></span><button id="cz-wtok-clear" class="cz-link" type="button">Forget token</button></div>' +
+      '<label for="cz-ttok">Trainer token (drain the bus / learner lease)</label>' +
+      '<input id="cz-ttok" type="password" placeholder="trainer token — drain the bus / learner lease" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
+      '<label class="cz-check"><input id="cz-tremember" type="checkbox" /> Remember trainer token on this device (otherwise in-memory only)</label>' +
+      '<div class="cz-tokrow"><span id="cz-ttok-state" class="cz-tokstate"></span><button id="cz-ttok-clear" class="cz-link" type="button">Forget token</button></div>' +
       '<button id="cz-openabout" class="cz-done cz-full" type="button">About Cribbage Zero</button>' +
       '</div></div>');
 
@@ -126,7 +131,7 @@
 
     function persistRepo() { localStorage.setItem("cz_repo", repoIn.value.trim() || REPO_DEFAULT); }
     function persistBus() { localStorage.setItem("cz_bus_url", busIn.value.trim() || BUS_DEFAULT); }
-    gitTok.wire(); workerTok.wire();          // both tokens: empty write-only inputs + presence labels, never pre-filled
+    gitTok.wire(); workerTok.wire(); trainerTok.wire();   // all tokens: empty write-only inputs + presence labels, never pre-filled
     repoIn.addEventListener("change", persistRepo);
     busIn.addEventListener("change", persistBus);
 
@@ -134,7 +139,7 @@
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
     document.getElementById("cz-info").addEventListener("click", function () { show(about); });
     document.getElementById("cz-openabout").addEventListener("click", function () { hide(settings); show(about); });
-    function commitAll() { gitTok.commit(); workerTok.commit(); persistRepo(); persistBus(); }
+    function commitAll() { gitTok.commit(); workerTok.commit(); trainerTok.commit(); persistRepo(); persistBus(); }
     [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { commitAll(); hide(o); } }); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { commitAll(); hide(settings); hide(about); } });
   }
@@ -144,9 +149,11 @@
   window.CZ = {
     token: function () { return gitTok.get(); },              // GitHub token (Contents: write)
     workerToken: function () { return workerTok.get(); },     // data-bus worker token (append self-play)
+    trainerToken: function () { return trainerTok.get(); },   // data-bus trainer token (drain + learner lease)
+    busToken: function () { return workerTok.get() || trainerTok.get(); },   // either works for read-only bus monitoring
     repo: function () { var i = document.getElementById("cz-repo"); return (i && i.value.trim()) || localStorage.getItem("cz_repo") || REPO_DEFAULT; },
     busUrl: function () { var i = document.getElementById("cz-bus"); return ((i && i.value.trim()) || localStorage.getItem("cz_bus_url") || BUS_DEFAULT).replace(/\/+$/, ""); },
-    persist: function () { gitTok.commit(); workerTok.commit();   // capture+wipe both typed tokens, mirror per "remember"
+    persist: function () { gitTok.commit(); workerTok.commit(); trainerTok.commit();   // capture+wipe typed tokens, mirror per "remember"
       var p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
       if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT);
       if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT); },

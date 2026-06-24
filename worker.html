@@ -33,10 +33,7 @@
   <p class="sub">Read-only view of the live training run: the net's progress on GitHub, the data-bus queue
   depth, and whether a learner is alive. Self-play now runs in the native <b>cz_pc</b> engine, not the browser.</p>
 
-  <p class="sub" style="margin:-6px 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — change it in ⚙ Settings.</p>
-  <label for="tok">Bus token <span style="opacity:.7">(worker or trainer — shows the queue depth + learner status)</span></label>
-  <input id="tok" type="password" placeholder="paste a bus token (optional)" autocapitalize="off" autocorrect="off" />
-  <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember bus token on this device (otherwise in-memory only)</label>
+  <p class="sub" style="margin:-6px 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — set the bus URL and a <b>worker or trainer token</b> in ⚙ Settings to see the queue depth + learner status.</p>
 
   <div class="btns"><button id="refresh">Refresh now</button></div>
 
@@ -63,12 +60,10 @@
   var $ = function (id) { return document.getElementById(id); };
   $("ver").textContent = window.CZ_VERSION;
 
-  // bus URL is a shared ⚙ Settings global (window.CZ.busUrl); the bus token stays per-page (opt-in remember).
+  // bus URL + tokens are shared ⚙ Settings globals (window.CZ). Monitoring is read-only and accepts either the
+  // worker or trainer token — CZ.busToken() returns whichever is set (worker preferred).
   function busBase() { return (window.CZ && CZ.busUrl()) || ""; }
   $("busShow").textContent = busBase();
-  var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
-  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
-  $("remember").addEventListener("change", persistToken);
 
   function set(id, text, cls) { var el = $(id); el.textContent = text; el.className = "v" + (cls ? " " + cls : ""); }
 
@@ -88,11 +83,10 @@
   }
 
   async function refreshBus() {
-    var api = busBase(), token = $("tok").value.trim();
+    var api = busBase(), token = (window.CZ && CZ.busToken()) || "";
     $("busShow").textContent = api;
     if (!api) { set("shards", "set the bus URL in ⚙ Settings", "dim"); set("lease", "set the bus URL in ⚙ Settings", "dim"); return; }
-    if (!token) { set("shards", "enter a bus token", "dim"); set("lease", "enter a bus token", "dim"); return; }
-    persistToken();
+    if (!token) { set("shards", "add a token in ⚙ Settings", "dim"); set("lease", "add a token in ⚙ Settings", "dim"); return; }
     // queue depth (/stats — worker OR trainer token)
     try {
       var r = await busGet("/stats", token);
