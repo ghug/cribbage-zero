@@ -28,9 +28,12 @@ public:
     return r.status == 200;
   }
 
-  std::vector<Shard> getShards(int limit) {
+  // outStatus (optional) receives the raw HTTP status so the caller can tell an empty queue (200, no shards)
+  // apart from a rejected request — a 403 here means the token is a WORKER token, which cannot drain.
+  std::vector<Shard> getShards(int limit, long* outStatus = nullptr) {
     std::vector<Shard> out;
     auto r = http_->get(base_ + "/shards?limit=" + std::to_string(limit), authHeaders());
+    if (outStatus) *outStatus = r.status;
     if (r.status != 200) return out;
     auto j = json::parse(r.body, nullptr, false);
     if (j.is_discarded() || !j.contains("shards")) return out;
@@ -57,11 +60,12 @@ public:
 
   // single-writer learner lease. `available` is false if the bus has no lease route (old Worker) or a
   // transient error → the caller treats that as "no lock available" and proceeds without one.
-  struct Lease { bool ok = false; bool available = true; std::string holder; long expiresAt = 0; };
+  struct Lease { bool ok = false; bool available = true; long status = 0; std::string holder; long expiresAt = 0; };
   Lease acquireLease(const std::string& id, long ttlMs) {
     Lease L;
     json body; body["id"] = id; body["ttl"] = ttlMs;
     auto r = http_->post(base_ + "/lease/acquire", body.dump(), authHeaders());
+    L.status = r.status;
     if (r.status != 200) { L.available = false; return L; }
     auto j = json::parse(r.body, nullptr, false);
     if (j.is_discarded()) { L.available = false; return L; }

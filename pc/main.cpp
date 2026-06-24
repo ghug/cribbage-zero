@@ -195,6 +195,7 @@ int main(int argc, char** argv) {
   bool usingLease = false;
   if (bus) {
     auto L = bus->acquireLease(workerId, leaseTtl);
+    if (L.status == 403) { log("FATAL: CZ_BUS_TOKEN is a WORKER token — the learner needs the TRAINER token to drain the bus and hold the lease. Refusing to start."); return 1; }
     if (!L.available) log("note: bus has no learner lease (redeploy the Worker to enable it) — running WITHOUT the single-writer lock");
     else if (!L.ok) { log("FATAL: another learner holds the lease (holder " + L.holder + ") — refusing to start a second learner."); return 1; }
     else { usingLease = true; log("acquired the learner lease"); }
@@ -215,7 +216,14 @@ int main(int argc, char** argv) {
     long newSamples = (long)local.size();
     buf.add(local);
     std::vector<long> pruneIds;
-    if (bus) { auto sh = bus->getShards(envi("CZ_BUS_LIMIT", 400)); for (auto& s : sh) { buf.add(s.samples); newSamples += s.samples.size(); pruneIds.push_back(s.id); } }
+    if (bus) {
+      long drainStatus = 0;
+      auto sh = bus->getShards(envi("CZ_BUS_LIMIT", 400), &drainStatus);
+      if (drainStatus != 200)
+        log(drainStatus == 403 ? "WARNING: bus drain FORBIDDEN (403) — CZ_BUS_TOKEN is a WORKER token; the learner needs the TRAINER token. NOT draining the bus."
+            : "WARNING: bus drain failed (status " + std::to_string(drainStatus) + ") — check CZ_BUS_URL/CZ_BUS_TOKEN. NOT draining the bus.");
+      for (auto& s : sh) { buf.add(s.samples); newSamples += s.samples.size(); pruneIds.push_back(s.id); }
+    }
     int steps = std::max(1, (int)std::lround((double)trainPerSample * newSamples / batch));
     Rng tr(seed * 2654435761u);
     double loss = trainReplay(net, buf, steps, batch, lr, tr, wd, /*augment=*/true);
