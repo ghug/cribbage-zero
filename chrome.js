@@ -62,7 +62,7 @@
 
     var about = node('<div id="cz-about" class="cz-overlay" role="dialog" aria-modal="true" aria-label="About"><div class="cz-modal">' +
       '<div class="cz-modal-head"><h2>About</h2><button class="cz-done" type="button" data-close>Done</button></div>' +
-      '<p>An open-source, from-scratch <b>AlphaZero-style</b> cribbage engine: a neural network guided by ' +
+      '<p>An open-source, from-scratch cribbage engine: a neural network guided by ' +
       'Monte-Carlo Tree Search learns cribbage purely from self-play. The trained net lives on the GitHub ' +
       '<b>net</b> branch; many devices contribute self-play and one learner trains + republishes it.</p>' +
       '<p>Version ' + ver + ' · public domain (The Unlicense).</p>' +
