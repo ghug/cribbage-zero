@@ -23,7 +23,7 @@ struct ActorConfig {
   std::string token;                // GitHub token — optional (anonymous public net read works)
   std::string branch = "net";
   std::string workerId = "actor";
-  int sims = 40, workers = 2, pairsPerRound = 20, shardMax = 1500;
+  int sims = 40, workers = 2, pairsPerRound = 20, shardMax = 300;   // small rows: a 247-dim sample is ~1.5KB, so D1 caps the row well under 500 here
   int refreshMinSec = 0;            // throttle: min seconds between net re-downloads (0 = refresh on every advance)
   uint32_t seed = 12345;
 };
@@ -60,7 +60,7 @@ inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<b
   uint32_t seed = cfg.seed;
   int w = cfg.workers > 0 ? cfg.workers : 2;
   int pr = cfg.pairsPerRound > 0 ? cfg.pairsPerRound : 20;
-  int sm = cfg.shardMax > 0 ? cfg.shardMax : 1500;
+  int sm = cfg.shardMax > 0 ? cfg.shardMax : 300;
   auto lastRefresh = std::chrono::steady_clock::now();
   bool prevFailed = false;   // edge-trigger the escalated alert: notify on the FIRST failing round, not every one
 
@@ -69,16 +69,17 @@ inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<b
     parallelSelfPlay(net, cfg.sims > 0 ? cfg.sims : 40, 1.5, pr, w, seed++, s,
                      /*tempMoves=*/30, /*dirEps=*/0.25, /*dirAlpha=*/0.8, /*fpu=*/0.25, /*cBase=*/19652.0);
     total += (long)pr * 2;
-    long uploaded = 0, failStatus = 0;
+    long uploaded = 0, failStatus = 0; std::string failBody;
     for (size_t i = 0; i < s.size() && !stop; i += (size_t)sm) {
       std::vector<Sample> chunk(s.begin() + i, s.begin() + std::min(s.size(), i + (size_t)sm));
       long st = 0;
-      if (bus.putShard(chunk, cfg.workerId, &st)) uploaded += (long)chunk.size();
+      if (bus.putShard(chunk, cfg.workerId, &st, &failBody)) uploaded += (long)chunk.size();
       else failStatus = st;
     }
     if (failStatus != 0) {   // fail loudly: don't report a phantom "uploaded" when the bus refused the samples
       std::string msg = "WARNING: " + busFailDesc(failStatus) + " — " + std::to_string((long)s.size() - uploaded)
-                      + " samples NOT uploaded (" + std::to_string(total) + " games self-played so far)";
+                      + " samples NOT uploaded (" + std::to_string(total) + " games self-played so far)"
+                      + (failBody.empty() ? "" : " — bus said: " + failBody.substr(0, 200));
       log(msg);
       if (notify && !prevFailed) notify(msg);   // optional escalated alert, only on the rising edge (no per-round spam)
       prevFailed = true;

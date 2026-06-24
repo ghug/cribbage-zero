@@ -19,8 +19,10 @@ public:
   }
 
   // outStatus (optional) receives the raw HTTP status. status -1 = transport error (bus unreachable);
-  // 401/403 = the token is rejected; 200 = accepted.
-  bool putShard(const std::vector<Sample>& samples, const std::string& workerId, long* outStatus = nullptr) {
+  // 401/403 = the token is rejected; 200 = accepted. outBody (optional) receives the response body on failure
+  // (the Worker returns {"error":...}), so the caller can surface the real reason (e.g. a D1 row-size error).
+  bool putShard(const std::vector<Sample>& samples, const std::string& workerId,
+                long* outStatus = nullptr, std::string* outBody = nullptr) {
     json body;
     body["workerId"] = workerId;
     json arr = json::array();
@@ -28,6 +30,7 @@ public:
     body["samples"] = std::move(arr);
     auto r = http_->post(base_ + "/shard", body.dump(), authHeaders());
     if (outStatus) *outStatus = r.status;
+    if (outBody && r.status != 200) *outBody = r.body;
     return r.status == 200;
   }
 

@@ -110,7 +110,7 @@
     localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", threads); localStorage.setItem("az_refresh", refreshMin);
     localStorage.setItem("az_notify", notify ? "1" : "0");
     try {
-      CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, threads, 20, 1500, refreshMin, notify);
+      CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, threads, 20, 300, refreshMin, notify);
     } catch (e) { $("state").textContent = "start failed: " + e; }
     poll();
   });

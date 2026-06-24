@@ -94,7 +94,7 @@ public class SelfPlayService extends Service {
         final int sims = intInt(intent, "sims", 40);
         final int workers = intInt(intent, "workers", 2);
         final int pairs = intInt(intent, "pairs", 20);
-        final int shardMax = intInt(intent, "shardMax", 1500);
+        final int shardMax = intInt(intent, "shardMax", 300);
         final int refreshMin = intInt(intent, "refreshMin", 10);
         alertsEnabled = intent != null && intent.getBooleanExtra("notifyOnFail", false);
 

@@ -65,7 +65,7 @@ Environment:
   CZ_BATCH         train mini-batch size         (default 256)
   CZ_BUF           replay-buffer capacity        (default 200000)
   CZ_PUSH_GAMES    push the net every N games    (default 10000)
-  CZ_SHARD_MAX     samples per uploaded shard    (default 1500)
+  CZ_SHARD_MAX     samples per uploaded shard    (default 300; keep small — D1 caps the row size)
   CZ_REFRESH_MIN   actor: min minutes between net re-downloads  (default 0 = on every advance)
   CZ_BUS_LIMIT     shards drained per round      (default 400)
   CZ_LEASE_TTL_MS  learner-lease TTL in ms       (default 600000)
@@ -166,22 +166,23 @@ int main(int argc, char** argv) {
 
   if (actor) {
     if (!bus) { log("--actor needs CZ_BUS_URL + CZ_BUS_TOKEN"); return 1; }
-    int shardMax = envi("CZ_SHARD_MAX", 1500);
+    int shardMax = envi("CZ_SHARD_MAX", 300);
     double refreshMin = envf("CZ_REFRESH_MIN", 0);   // min minutes between net re-downloads (0 = refresh on every advance)
     auto lastRefresh = std::chrono::steady_clock::now();
     log("ACTOR: self-play -> bus");
     while (!g_stop) {
       std::vector<Sample> s;
       parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, s, tempMoves, dirEps, dirAlpha, fpu, cBase);
-      long uploaded = 0, failStatus = 0;
+      long uploaded = 0, failStatus = 0; std::string failBody;
       for (size_t i = 0; i < s.size(); i += shardMax) {
         std::vector<Sample> chunk(s.begin() + i, s.begin() + std::min(s.size(), i + shardMax));
         long st = 0;
-        if (bus->putShard(chunk, workerId, &st)) uploaded += (long)chunk.size();
+        if (bus->putShard(chunk, workerId, &st, &failBody)) uploaded += (long)chunk.size();
         else failStatus = st;
       }
       if (failStatus != 0) {   // fail loudly — don't claim an upload the bus refused; echo to stderr so it stands out
-        std::string warn = "WARNING: " + busFailDesc(failStatus) + " — " + std::to_string((long)s.size() - uploaded) + " samples NOT uploaded";
+        std::string warn = "WARNING: " + busFailDesc(failStatus) + " — " + std::to_string((long)s.size() - uploaded) + " samples NOT uploaded"
+                         + (failBody.empty() ? "" : " — bus said: " + failBody.substr(0, 200));
         log(warn);
         std::fprintf(stderr, "[cz] %s\n", warn.c_str()); std::fflush(stderr);
       } else {
