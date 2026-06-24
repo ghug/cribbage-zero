@@ -10,6 +10,7 @@
 (function () {
   "use strict";
   var REPO_DEFAULT = "ghug/cribbage-zero";
+  var BUS_DEFAULT = "https://cribbage-zero-bus.gabrielhug.workers.dev";
 
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
@@ -57,6 +58,8 @@
       '<label class="cz-check"><input id="cz-remember" type="checkbox" /> Remember token on this device (otherwise in-memory only)</label>' +
       '<label for="cz-repo">Repo (owner/name)</label>' +
       '<input id="cz-repo" type="text" placeholder="' + REPO_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
+      '<label for="cz-bus">Data-bus URL</label>' +
+      '<input id="cz-bus" type="text" placeholder="' + BUS_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
       '<button id="cz-openabout" class="cz-done cz-full" type="button">About Cribbage Zero</button>' +
       '</div></div>');
 
@@ -71,22 +74,26 @@
 
     document.body.appendChild(icons); document.body.appendChild(settings); document.body.appendChild(about);
 
-    var tokIn = document.getElementById("cz-token"), remIn = document.getElementById("cz-remember"), repoIn = document.getElementById("cz-repo");
+    var tokIn = document.getElementById("cz-token"), remIn = document.getElementById("cz-remember"),
+        repoIn = document.getElementById("cz-repo"), busIn = document.getElementById("cz-bus");
     var savedTok = localStorage.getItem("cz_token"); if (savedTok) { tokIn.value = savedTok; remIn.checked = true; }
     repoIn.value = localStorage.getItem("cz_repo") || REPO_DEFAULT;
+    busIn.value = localStorage.getItem("cz_bus_url") || BUS_DEFAULT;
 
     function persistToken() { var t = tokIn.value.trim(); if (remIn.checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
     function persistRepo() { localStorage.setItem("cz_repo", repoIn.value.trim() || REPO_DEFAULT); }
+    function persistBus() { localStorage.setItem("cz_bus_url", busIn.value.trim() || BUS_DEFAULT); }
     remIn.addEventListener("change", persistToken);
     tokIn.addEventListener("change", persistToken);
     repoIn.addEventListener("change", persistRepo);
+    busIn.addEventListener("change", persistBus);
 
     function show(o) { o.classList.add("cz-on"); } function hide(o) { o.classList.remove("cz-on"); }
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
     document.getElementById("cz-info").addEventListener("click", function () { show(about); });
     document.getElementById("cz-openabout").addEventListener("click", function () { hide(settings); show(about); });
-    [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { persistToken(); persistRepo(); hide(o); } }); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { persistToken(); persistRepo(); hide(settings); hide(about); } });
+    [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { persistToken(); persistRepo(); persistBus(); hide(o); } }); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { persistToken(); persistRepo(); persistBus(); hide(settings); hide(about); } });
   }
 
   // Global accessors — read live from the inputs (so an un-remembered, in-memory token still works), with a
@@ -94,9 +101,11 @@
   window.CZ = {
     token: function () { var i = document.getElementById("cz-token"); return (i ? i.value.trim() : "") || ""; },
     repo: function () { var i = document.getElementById("cz-repo"); return (i && i.value.trim()) || localStorage.getItem("cz_repo") || REPO_DEFAULT; },
-    persist: function () { var t = document.getElementById("cz-token"), r = document.getElementById("cz-remember"), p = document.getElementById("cz-repo");
+    busUrl: function () { var i = document.getElementById("cz-bus"); return ((i && i.value.trim()) || localStorage.getItem("cz_bus_url") || BUS_DEFAULT).replace(/\/+$/, ""); },
+    persist: function () { var t = document.getElementById("cz-token"), r = document.getElementById("cz-remember"), p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
       if (t && r) { var v = t.value.trim(); if (r.checked && v) localStorage.setItem("cz_token", v); else localStorage.removeItem("cz_token"); }
-      if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT); },
+      if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT);
+      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT); },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();

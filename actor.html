@@ -34,8 +34,7 @@
   learner. Runs as a foreground service with a wake-lock, so it keeps going with the screen off. <a href="dev.html">← tools</a></p>
 
   <div id="appUI" style="display:none">
-    <label for="api">Data-bus API URL</label>
-    <input id="api" inputmode="url" placeholder="https://cribbage-zero-bus.gabrielhug.workers.dev" autocapitalize="off" autocorrect="off" />
+    <p class="sub" style="margin:0 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — change it in ⚙ Settings.</p>
     <label for="tok">Worker token</label>
     <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember worker token on this device</label>
@@ -76,8 +75,8 @@
   if (!window.CZAndroid) { $("browserUI").style.display = "block"; return; }   // browser: show the install notice only
   $("appUI").style.display = "block";
 
-  // config (shared keys with the monitor so settings carry over). Token persistence is opt-in.
-  $("api").value = localStorage.getItem("az_api") || "https://cribbage-zero-bus.gabrielhug.workers.dev";
+  // bus URL is a shared ⚙ Settings global (window.CZ.busUrl); other config persists per-page. Token opt-in.
+  $("busShow").textContent = (window.CZ && CZ.busUrl()) || "";
   var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
   if (localStorage.getItem("az_threads")) $("threads").value = localStorage.getItem("az_threads");
@@ -100,9 +99,9 @@
   }
 
   $("start").addEventListener("click", function () {
-    var api = ($("api").value.trim() || "").replace(/\/+$/, ""), tok = $("tok").value.trim();
-    if (!api || !tok) { $("state").textContent = "enter the bus URL + worker token first"; return; }
-    persistToken(); localStorage.setItem("az_api", api);
+    var api = (window.CZ && CZ.busUrl()) || "", tok = $("tok").value.trim();
+    if (!api || !tok) { $("state").textContent = "set the bus URL in ⚙ Settings + enter a worker token first"; return; }
+    persistToken();
     var sims = Math.max(1, parseInt($("sims").value, 10) || 40), threads = Math.max(1, parseInt($("threads").value, 10) || 2);
     var refreshMin = Math.max(0, parseInt($("refresh").value, 10) || 0);
     localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", threads); localStorage.setItem("az_refresh", refreshMin);
