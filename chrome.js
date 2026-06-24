@@ -75,13 +75,12 @@
       "border-radius:9px;border:1px solid var(--line,#2f6b4d);background:rgba(0,0,0,.28);color:var(--ink,#f3ecd6);font-size:14px}",
     ".cz-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut,#a9c4b3);margin:8px 0 0;cursor:pointer}",
     ".cz-check input{width:auto;margin:0}",
-    ".cz-done{border:1px solid var(--line,#2f6b4d);background:rgba(255,255,255,.1);color:var(--ink,#f3ecd6);border-radius:9px;padding:7px 14px;font-size:13px;cursor:pointer}",
+    ".cz-done{flex:0 0 auto;border:1px solid var(--line,#2f6b4d);background:rgba(255,255,255,.1);color:var(--ink,#f3ecd6);border-radius:9px;padding:7px 14px;font-size:13px;cursor:pointer}",
     ".cz-done:hover{border-color:var(--gold,#d6bc7a)}",
     ".cz-full{width:100%;margin-top:14px}",
     ".cz-modal a{color:var(--gold,#d6bc7a)}",
     ".cz-modal p{color:var(--mut,#a9c4b3);font-size:13px}",
-    ".cz-cfg{font-size:12px;color:var(--mut,#a9c4b3);margin:0;word-break:break-all}.cz-cfg b{color:var(--ink,#f3ecd6);font-weight:600}",
-    ".cz-sub{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold,#d6bc7a);margin:14px 0 2px;border-top:1px solid var(--line,#2f6b4d);padding-top:12px}",
+    ".cz-cfg{font-size:12px;color:var(--mut,#a9c4b3);margin:3px 0 0;word-break:break-all}.cz-cfg b{color:var(--ink,#f3ecd6);font-weight:600}",
     ".cz-tokmeta{display:flex;align-items:center;gap:10px;margin:5px 0 2px}",
     ".cz-tokmeta .cz-check{margin:0;flex:0 0 auto}",
     ".cz-tokstate{flex:1 1 auto;font-size:12px;color:var(--mut,#a9c4b3)}",
@@ -107,8 +106,8 @@
 
     var settings = node('<div id="cz-settings" class="cz-overlay" role="dialog" aria-modal="true" aria-label="Settings"><div class="cz-modal">' +
       '<div class="cz-modal-head"><h2>Settings</h2><button class="cz-done" type="button" data-close>Done</button></div>' +
-      '<p class="cz-cfg">Repo <b>' + REPO_DEFAULT + '</b> · bus <b>' + BUS_DEFAULT.replace(/^https?:\/\//, "") + '</b></p>' +
-      '<div class="cz-sub">Tokens</div>' +
+      '<p class="cz-cfg">GitHub repo <b>' + REPO_DEFAULT + '</b></p>' +
+      '<p class="cz-cfg">Data bus <b>' + BUS_DEFAULT.replace(/^https?:\/\//, "") + '</b></p>' +
       tokenHtml("cz-token", "cz-remember", "cz-token-state", "cz-token-clear", "GitHub token (Contents: write)", "ghp_… — blank = read-only") +
       tokenHtml("cz-wtok", "cz-wremember", "cz-wtok-state", "cz-wtok-clear", "Worker token (append self-play)", "worker token — append self-play") +
       tokenHtml("cz-ttok", "cz-tremember", "cz-ttok-state", "cz-ttok-clear", "Trainer token (drain · learner lease)", "trainer token — drain · lease") +
