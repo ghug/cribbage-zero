@@ -12,6 +12,20 @@
   var REPO_DEFAULT = "ghug/cribbage-zero";
   var BUS_DEFAULT = "https://cribbage-zero-bus.gabrielhug.workers.dev";
 
+  // The GitHub token is held HERE (a closure var, seeded from a remembered copy) — never in the input's value,
+  // so the secret never sits in the DOM where any element / script / screenshot / autofill could read it. The
+  // input is write-only: typing a token captures it here and the field is cleared; presence is shown by a label.
+  var memToken = localStorage.getItem("cz_token") || "";
+  function renderTokenState() {
+    var st = document.getElementById("cz-token-state"), inp = document.getElementById("cz-token"), clr = document.getElementById("cz-token-clear");
+    if (!st || !inp || !clr) return;
+    var has = !!memToken, remembered = !!localStorage.getItem("cz_token");
+    st.textContent = has ? ("✓ token set" + (remembered ? " · saved on this device" : " · in-memory this session")) : "no token · read-only mode";
+    st.className = "cz-tokstate" + (has ? " cz-tokset" : "");
+    inp.placeholder = has ? "•••••••• set — paste to replace" : "ghp_… — leave blank for read-only";
+    clr.style.display = has ? "" : "none";
+  }
+
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
     ".cz-icon{width:34px;height:34px;border-radius:9px;border:1px solid var(--line,#2f6b4d);background:rgba(0,0,0,.28);",
@@ -33,6 +47,10 @@
     ".cz-full{width:100%;margin-top:14px}",
     ".cz-modal a{color:var(--gold,#d6bc7a)}",
     ".cz-modal p{color:var(--mut,#a9c4b3);font-size:13px}",
+    ".cz-tokrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 0}",
+    ".cz-tokstate{font-size:12px;color:var(--mut,#a9c4b3)}",
+    ".cz-tokstate.cz-tokset{color:var(--good,#6fbf8e)}",
+    ".cz-link{background:none;border:0;color:var(--gold,#d6bc7a);font:inherit;font-size:12px;cursor:pointer;padding:0;text-decoration:underline}",
   ].join("");
 
   function node(html) { var d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
@@ -56,6 +74,7 @@
       '<label for="cz-token">GitHub token (Contents: write)</label>' +
       '<input id="cz-token" type="password" placeholder="ghp_… — leave blank for read-only" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
       '<label class="cz-check"><input id="cz-remember" type="checkbox" /> Remember token on this device (otherwise in-memory only)</label>' +
+      '<div class="cz-tokrow"><span id="cz-token-state" class="cz-tokstate"></span><button id="cz-token-clear" class="cz-link" type="button">Forget token</button></div>' +
       '<label for="cz-repo">Repo (owner/name)</label>' +
       '<input id="cz-repo" type="text" placeholder="' + REPO_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
       '<label for="cz-bus">Data-bus URL</label>' +
@@ -76,17 +95,21 @@
 
     var tokIn = document.getElementById("cz-token"), remIn = document.getElementById("cz-remember"),
         repoIn = document.getElementById("cz-repo"), busIn = document.getElementById("cz-bus");
-    var savedTok = localStorage.getItem("cz_token"); if (savedTok) { tokIn.value = savedTok; remIn.checked = true; }
+    remIn.checked = !!localStorage.getItem("cz_token");   // "remembered" iff a copy is persisted; the input stays empty
     repoIn.value = localStorage.getItem("cz_repo") || REPO_DEFAULT;
     busIn.value = localStorage.getItem("cz_bus_url") || BUS_DEFAULT;
 
-    function persistToken() { var t = tokIn.value.trim(); if (remIn.checked && t) localStorage.setItem("cz_token", t); else localStorage.removeItem("cz_token"); }
+    // capture any freshly-typed token into memory, wipe it from the field, then mirror to storage per "remember"
+    function persistToken() { var t = tokIn.value.trim(); if (t) { memToken = t; tokIn.value = ""; }
+      if (remIn.checked && memToken) localStorage.setItem("cz_token", memToken); else localStorage.removeItem("cz_token"); renderTokenState(); }
     function persistRepo() { localStorage.setItem("cz_repo", repoIn.value.trim() || REPO_DEFAULT); }
     function persistBus() { localStorage.setItem("cz_bus_url", busIn.value.trim() || BUS_DEFAULT); }
     remIn.addEventListener("change", persistToken);
     tokIn.addEventListener("change", persistToken);
+    document.getElementById("cz-token-clear").addEventListener("click", function () { memToken = ""; tokIn.value = ""; localStorage.removeItem("cz_token"); renderTokenState(); });
     repoIn.addEventListener("change", persistRepo);
     busIn.addEventListener("change", persistBus);
+    renderTokenState();
 
     function show(o) { o.classList.add("cz-on"); } function hide(o) { o.classList.remove("cz-on"); }
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
@@ -96,16 +119,18 @@
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { persistToken(); persistRepo(); persistBus(); hide(settings); hide(about); } });
   }
 
-  // Global accessors — read live from the inputs (so an un-remembered, in-memory token still works), with a
-  // localStorage fallback for code that runs before the chrome DOM is built.
+  // Global accessors. The token is the in-memory closure var (never read from the DOM); repo/bus read the live
+  // input with a localStorage fallback for code that runs before the chrome DOM is built.
   window.CZ = {
-    token: function () { var i = document.getElementById("cz-token"); return (i ? i.value.trim() : "") || ""; },
+    token: function () { return memToken; },
     repo: function () { var i = document.getElementById("cz-repo"); return (i && i.value.trim()) || localStorage.getItem("cz_repo") || REPO_DEFAULT; },
     busUrl: function () { var i = document.getElementById("cz-bus"); return ((i && i.value.trim()) || localStorage.getItem("cz_bus_url") || BUS_DEFAULT).replace(/\/+$/, ""); },
     persist: function () { var t = document.getElementById("cz-token"), r = document.getElementById("cz-remember"), p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
-      if (t && r) { var v = t.value.trim(); if (r.checked && v) localStorage.setItem("cz_token", v); else localStorage.removeItem("cz_token"); }
+      if (t) { var v = t.value.trim(); if (v) { memToken = v; t.value = ""; } }                       // capture any typed token, wipe the DOM
+      if (r) { if (r.checked && memToken) localStorage.setItem("cz_token", memToken); else localStorage.removeItem("cz_token"); }
       if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT);
-      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT); },
+      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT);
+      renderTokenState(); },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
