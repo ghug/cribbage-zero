@@ -43,7 +43,6 @@
 
   <div class="bar">
     <div style="flex:0 0 auto"><button id="refresh">↻ Refresh</button></div>
-    <div style="flex:0 0 auto; align-self:center"><label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;font-size:13px;color:var(--ink)"><input id="ebars" type="checkbox" style="width:auto;margin:0" /> error bars</label></div>
   </div>
   <div id="status"></div>
   <p class="note">Read-only and token-less by default (the progress branch is public). The two series use very
@@ -93,20 +92,8 @@
     ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.fillStyle = "#a9c4b3"; ctx.lineWidth = 1; ctx.textAlign = "left";
     for (var v = 0; v <= 100; v += 25) { var yy = Y(v); ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke(); ctx.fillText(v + "%", 6, yy + 3); }
     [xmin, (xmin + xmax) / 2, xmax].forEach(function (xv, i) { ctx.textAlign = i === 0 ? "left" : i === 2 ? "right" : "center"; ctx.fillText(fmtGames(xv), X(xv), H - 8); });
-    var showErr = $("ebars") && $("ebars").checked, N_EVAL = 10000;   // ~95% CI at the recording minimum sample
     series.forEach(function (s) {
       if (!s.pts.length) return;
-      if (showErr) {                                                  // error bars first, behind the line
-        ctx.strokeStyle = s.color; ctx.lineWidth = 1; ctx.globalAlpha = 0.45;
-        s.pts.forEach(function (p) {
-          var pp = Math.min(1, Math.max(0, p.y / 100)), e = 100 * 1.96 * Math.sqrt(pp * (1 - pp) / N_EVAL);   // half-CI, %
-          var xx = X(p.x), y1 = Y(Math.max(0, p.y - e)), y2 = Y(Math.min(100, p.y + e));
-          ctx.beginPath(); ctx.moveTo(xx, y1); ctx.lineTo(xx, y2);
-          ctx.moveTo(xx - 3, y1); ctx.lineTo(xx + 3, y1); ctx.moveTo(xx - 3, y2); ctx.lineTo(xx + 3, y2);
-          ctx.stroke();
-        });
-        ctx.globalAlpha = 1;
-      }
       ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
       s.pts.forEach(function (p, i) { var xx = X(p.x), yy = Y(p.y); i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); });
       ctx.stroke();
@@ -127,7 +114,6 @@
   }
 
   $("refresh").addEventListener("click", function () { CZ.persist(); load(); });
-  $("ebars").addEventListener("change", draw);
   window.addEventListener("resize", draw);
   load();
 })();
