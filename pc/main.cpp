@@ -32,10 +32,69 @@ static int envi(const char* k, int def) { const char* v = getenv(k); return v &&
 static double envf(const char* k, double def) { const char* v = getenv(k); return v && *v ? atof(v) : def; }
 static void log(const std::string& m) { std::printf("[cz] %s\n", m.c_str()); std::fflush(stdout); }
 
+static void printHelp() {
+  std::puts(
+R"(Usage: cz_pc [OPTIONS] [gamesPerRound] [sims]
+
+Cribbage Zero self-play engine. The default mode is the LEARNER: pull the net from
+GitHub, self-play + train a replay buffer, drain the data bus, and push the net back.
+
+Options:
+  --actor          run as an actor: self-play -> upload sample shards to the bus
+                   (no training, no net push). Requires CZ_BUS_URL + CZ_BUS_TOKEN.
+  --dry            local self-play bench only (no network, no push) -- safe anywhere
+  --fresh          start from a random net, OVERWRITING the net branch on first push
+  -h, --help       show this help and exit
+
+Arguments:
+  gamesPerRound    self-play games per round    (default: CZ_CHUNK, else 500)
+  sims             MCTS simulations per move     (default: CZ_SIMS, else 40)
+
+Environment:
+  CZ_TOKEN         GitHub PAT (Contents: write) -- required for the learner to push
+  CZ_REPO          target repo                   (default ghug/cribbage-zero)
+  CZ_BRANCH        net branch                    (default net)
+  CZ_BUS_URL       data-bus Worker URL           (omit to run solo, no bus)
+  CZ_BUS_TOKEN     bus token: trainer (learner) or worker (actor)
+  CZ_WORKERS       self-play threads             (default: CPU cores - 1)
+  CZ_SIMS          MCTS sims per move            (default 40)
+  CZ_LR            SGD learning rate             (default 0.002)
+  CZ_MOMENTUM      SGD momentum                  (default 0.9)
+  CZ_WD            L2 weight decay               (default 1e-4)
+  CZ_BATCH         train mini-batch size         (default 256)
+  CZ_BUF           replay-buffer capacity        (default 200000)
+  CZ_PUSH_GAMES    push the net every N games    (default 10000)
+  CZ_SHARD_MAX     samples per uploaded shard    (default 1500)
+  CZ_BUS_LIMIT     shards drained per round      (default 400)
+  CZ_LEASE_TTL_MS  learner-lease TTL in ms       (default 600000)
+  CZ_TEMP_MOVES    temperature-sampled opening plies  (default 30)
+  CZ_DIR_EPS       Dirichlet root-noise weight   (default 0.25)
+  CZ_DIR_ALPHA     Dirichlet alpha               (default 0.8)
+  CZ_FPU           first-play-urgency reduction  (default 0.25)
+  CZ_CPUCT_BASE    c_puct log-scaling base       (default 19652)
+
+Examples:
+  export CZ_TOKEN=...                         # GitHub PAT (Contents: write)
+  cz_pc                                       # learner, solo
+  cz_pc --dry                                 # local self-play bench, no network
+
+  export CZ_BUS_URL=https://...workers.dev    # add a data bus:
+  export CZ_BUS_TOKEN=...                      #   trainer token -> learner+bus; worker token -> actor
+  cz_pc                                       # learner draining the bus
+  cz_pc --actor                               # actor feeding the bus)");
+}
+
 int main(int argc, char** argv) {
   bool actor = false, dry = false, fresh = false;
   std::vector<std::string> pos;
-  for (int i = 1; i < argc; i++) { std::string a = argv[i]; if (a == "--actor") actor = true; else if (a == "--dry") dry = true; else if (a == "--fresh") fresh = true; else pos.push_back(a); }
+  for (int i = 1; i < argc; i++) {
+    std::string a = argv[i];
+    if (a == "--actor") actor = true;
+    else if (a == "--dry") dry = true;
+    else if (a == "--fresh") fresh = true;
+    else if (a == "-h" || a == "--help") { printHelp(); return 0; }
+    else pos.push_back(a);
+  }
 
   const std::vector<int> HIDDEN = {256, 256, 256, 256};
   int gamesPerRound = pos.size() > 0 ? atoi(pos[0].c_str()) : envi("CZ_CHUNK", 500);
