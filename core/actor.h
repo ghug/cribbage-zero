@@ -28,10 +28,21 @@ struct ActorConfig {
   uint32_t seed = 12345;
 };
 
+// Human-readable reason a shard upload was rejected, by HTTP status (mirrors the learner's drain warnings).
+inline std::string busFailDesc(long status) {
+  if (status == 401 || status == 403)
+    return "bus REJECTED the upload (status " + std::to_string(status) + ") — CZ_BUS_TOKEN is missing or not a valid worker token";
+  if (status < 0) return "bus UNREACHABLE — check CZ_BUS_URL and the network connection";
+  return "bus upload FAILED (status " + std::to_string(status) + ")";
+}
+
 // Runs until `stop` is set. Returns games played (>=0), or -1 on a fatal start condition (no readable net).
-// `log` receives human-readable progress lines. The architecture is fixed to the learner's {256x4}.
+// `log` receives human-readable progress lines. `notify` (optional) receives only the loud, escalated bus-
+// failure alerts — wire it on platforms that want a distinct alert (e.g. an Android heads-up notification);
+// leave it null to route alerts through `log` alone. The architecture is fixed to the learner's {256x4}.
 inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<bool>& stop,
-                         const std::function<void(const std::string&)>& log) {
+                         const std::function<void(const std::string&)>& log,
+                         const std::function<void(const std::string&)>& notify = nullptr) {
   const std::vector<int> HIDDEN = {256, 256, 256, 256};
   GithubNet gh(&http, cfg.repo, cfg.token, cfg.branch);
   Net net(INPUT_DIM, HIDDEN, NPOL, 0.0, 1);
@@ -51,17 +62,30 @@ inline long runActorLoop(HttpClient& http, const ActorConfig& cfg, std::atomic<b
   int pr = cfg.pairsPerRound > 0 ? cfg.pairsPerRound : 20;
   int sm = cfg.shardMax > 0 ? cfg.shardMax : 1500;
   auto lastRefresh = std::chrono::steady_clock::now();
+  bool prevFailed = false;   // edge-trigger the escalated alert: notify on the FIRST failing round, not every one
 
   while (!stop) {
     std::vector<Sample> s;
     parallelSelfPlay(net, cfg.sims > 0 ? cfg.sims : 40, 1.5, pr, w, seed++, s,
                      /*tempMoves=*/30, /*dirEps=*/0.25, /*dirAlpha=*/0.8, /*fpu=*/0.25, /*cBase=*/19652.0);
     total += (long)pr * 2;
+    long uploaded = 0, failStatus = 0;
     for (size_t i = 0; i < s.size() && !stop; i += (size_t)sm) {
       std::vector<Sample> chunk(s.begin() + i, s.begin() + std::min(s.size(), i + (size_t)sm));
-      bus.putShard(chunk, cfg.workerId);
+      long st = 0;
+      if (bus.putShard(chunk, cfg.workerId, &st)) uploaded += (long)chunk.size();
+      else failStatus = st;
     }
-    log("uploaded " + std::to_string(s.size()) + " samples (" + std::to_string(total) + " games so far)");
+    if (failStatus != 0) {   // fail loudly: don't report a phantom "uploaded" when the bus refused the samples
+      std::string msg = "WARNING: " + busFailDesc(failStatus) + " — " + std::to_string((long)s.size() - uploaded)
+                      + " samples NOT uploaded (" + std::to_string(total) + " games self-played so far)";
+      log(msg);
+      if (notify && !prevFailed) notify(msg);   // optional escalated alert, only on the rising edge (no per-round spam)
+      prevFailed = true;
+    } else {
+      log("uploaded " + std::to_string(uploaded) + " samples (" + std::to_string(total) + " games so far)");
+      prevFailed = false;
+    }
     try {   // refresh the net if the learner advanced it (cheap info probe first), throttled to bound data use
       auto info = gh.pullInfo();
       double sinceRefresh = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastRefresh).count();

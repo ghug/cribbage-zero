@@ -43,6 +43,7 @@
       <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
       <div><label for="refresh">Refresh net (min)</label><input id="refresh" type="number" min="0" value="10" /></div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="notify" type="checkbox" style="width:auto;margin:0" /> Alert me if uploads to the bus fail</label>
 
     <div class="btns">
       <button id="start">Start</button>
@@ -81,6 +82,7 @@
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
   if (localStorage.getItem("az_threads")) $("threads").value = localStorage.getItem("az_threads");
   if (localStorage.getItem("az_refresh")) $("refresh").value = localStorage.getItem("az_refresh");
+  $("notify").checked = localStorage.getItem("az_notify") === "1";
   function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
   $("remember").addEventListener("change", persistToken);
 
@@ -104,9 +106,11 @@
     persistToken();
     var sims = Math.max(1, parseInt($("sims").value, 10) || 40), threads = Math.max(1, parseInt($("threads").value, 10) || 2);
     var refreshMin = Math.max(0, parseInt($("refresh").value, 10) || 0);
+    var notify = $("notify").checked;
     localStorage.setItem("az_sims", sims); localStorage.setItem("az_threads", threads); localStorage.setItem("az_refresh", refreshMin);
+    localStorage.setItem("az_notify", notify ? "1" : "0");
     try {
-      CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, threads, 20, 1500, refreshMin);
+      CZAndroid.startActor(api, tok, (window.CZ && CZ.token()) || "", (window.CZ && CZ.repo()) || "ghug/cribbage-zero", sims, threads, 20, 1500, refreshMin, notify);
     } catch (e) { $("state").textContent = "start failed: " + e; }
     poll();
   });

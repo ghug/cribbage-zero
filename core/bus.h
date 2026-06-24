@@ -18,13 +18,16 @@ public:
     while (!base_.empty() && base_.back() == '/') base_.pop_back();
   }
 
-  bool putShard(const std::vector<Sample>& samples, const std::string& workerId) {
+  // outStatus (optional) receives the raw HTTP status. status -1 = transport error (bus unreachable);
+  // 401/403 = the token is rejected; 200 = accepted.
+  bool putShard(const std::vector<Sample>& samples, const std::string& workerId, long* outStatus = nullptr) {
     json body;
     body["workerId"] = workerId;
     json arr = json::array();
     for (const auto& s : samples) arr.push_back(sampleToJson(s));
     body["samples"] = std::move(arr);
     auto r = http_->post(base_ + "/shard", body.dump(), authHeaders());
+    if (outStatus) *outStatus = r.status;
     return r.status == 200;
   }
 

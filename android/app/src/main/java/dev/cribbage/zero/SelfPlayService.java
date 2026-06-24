@@ -26,11 +26,17 @@ public class SelfPlayService extends Service {
     public static final String ACTION_START = "dev.cribbage.zero.START";
     public static final String ACTION_STOP = "dev.cribbage.zero.STOP";
     private static final String CHANNEL = "cz_actor";
+    private static final String ALERT_CHANNEL = "cz_alert";
     private static final int NOTIF_ID = 1;
+    private static final int ALERT_ID = 2;
 
     // observed by MainActivity's JS bridge (isRunning / status / log)
     public static volatile boolean running = false;
     public static volatile String status = "";
+    // when true, a bus-upload failure escalates to a high-priority heads-up notification (actor page toggle)
+    private static volatile boolean alertsEnabled = false;
+    // live instance, so the static native callback postAlert() has a Context to notify from
+    private static SelfPlayService instance;
     // recent progress lines (latest last) for the actor page's live readout — fed by the native log callback
     private static final ArrayDeque<String> LOG = new ArrayDeque<>();
 
@@ -56,12 +62,20 @@ public class SelfPlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel(
-                    CHANNEL, "Cribbage Zero actor", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Background self-play for the trainer");
             NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(ch);
+            if (nm != null) {
+                NotificationChannel ch = new NotificationChannel(
+                        CHANNEL, "Cribbage Zero actor", NotificationManager.IMPORTANCE_LOW);
+                ch.setDescription("Background self-play for the trainer");
+                nm.createNotificationChannel(ch);
+                // a separate HIGH-importance channel so an upload-failure alert can pop as a heads-up
+                NotificationChannel al = new NotificationChannel(
+                        ALERT_CHANNEL, "Cribbage Zero alerts", NotificationManager.IMPORTANCE_HIGH);
+                al.setDescription("Bus-upload failures while self-playing");
+                nm.createNotificationChannel(al);
+            }
         }
     }
 
@@ -82,6 +96,7 @@ public class SelfPlayService extends Service {
         final int pairs = intInt(intent, "pairs", 20);
         final int shardMax = intInt(intent, "shardMax", 1500);
         final int refreshMin = intInt(intent, "refreshMin", 10);
+        alertsEnabled = intent != null && intent.getBooleanExtra("notifyOnFail", false);
 
         running = true;
         clearLog();
@@ -124,7 +139,32 @@ public class SelfPlayService extends Service {
         // that with a spurious "stopping…".
         if (running) signalStop();
         releaseWake();
+        if (instance == this) instance = null;
         super.onDestroy();
+    }
+
+    /**
+     * Escalated bus-failure alert, invoked from the native callback ({@link NativeBridge#onActorAlert}).
+     * No-op unless the user enabled the actor page's "alert me if uploads fail" toggle. Posts a high-priority
+     * heads-up notification (separate from the ongoing one) that opens the actor page when tapped.
+     */
+    public static void postAlert(String m) {
+        SelfPlayService self = instance;
+        if (!alertsEnabled || self == null) return;
+        try {
+            Notification.Builder b = (Build.VERSION.SDK_INT >= 26)
+                    ? new Notification.Builder(self, ALERT_CHANNEL)
+                    : new Notification.Builder(self).setPriority(Notification.PRIORITY_HIGH);
+            Notification n = b.setContentTitle("Cribbage Zero — upload failing")
+                    .setContentText(m == null ? "bus upload failed" : m)
+                    .setStyle(new Notification.BigTextStyle().bigText(m == null ? "bus upload failed" : m))
+                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setContentIntent(self.openActorIntent())
+                    .setAutoCancel(true)
+                    .build();
+            NotificationManager nm = self.getSystemService(NotificationManager.class);
+            if (nm != null) nm.notify(ALERT_ID, n);
+        } catch (Throwable ignored) {}
     }
 
     // ---- notification ----

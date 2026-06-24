@@ -34,6 +34,13 @@ public final class NativeBridge {
     public static void onActorLog(String m) { SelfPlayService.pushLog(m); }
 
     /**
+     * Invoked FROM native (on the actor thread) on the rising edge of a bus-upload failure. Surfaced as a
+     * high-priority heads-up notification only if the user enabled the actor page's "alert me if uploads fail"
+     * toggle; otherwise suppressed (the failure is still in the log + ongoing notification text).
+     */
+    public static void onActorAlert(String m) { SelfPlayService.postAlert(m); }
+
+    /**
      * Perform one HTTP request — invoked FROM native (on the actor thread). Headers arrive as "Key: Value"
      * lines separated by '\n'. Returns "&lt;status&gt;\n&lt;body&gt;" ("-1\n&lt;message&gt;" on a transport error).
      */

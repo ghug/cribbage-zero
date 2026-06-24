@@ -9,6 +9,7 @@
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
+#include "actor.h"     // busFailDesc() — shared bus-failure wording
 #include "github.h"
 #include "http_curl.h"
 #include "net_io.h"
@@ -172,11 +173,20 @@ int main(int argc, char** argv) {
     while (!g_stop) {
       std::vector<Sample> s;
       parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, s, tempMoves, dirEps, dirAlpha, fpu, cBase);
+      long uploaded = 0, failStatus = 0;
       for (size_t i = 0; i < s.size(); i += shardMax) {
         std::vector<Sample> chunk(s.begin() + i, s.begin() + std::min(s.size(), i + shardMax));
-        bus->putShard(chunk, workerId);
+        long st = 0;
+        if (bus->putShard(chunk, workerId, &st)) uploaded += (long)chunk.size();
+        else failStatus = st;
       }
-      log("uploaded " + std::to_string(s.size()) + " samples");
+      if (failStatus != 0) {   // fail loudly — don't claim an upload the bus refused; echo to stderr so it stands out
+        std::string warn = "WARNING: " + busFailDesc(failStatus) + " — " + std::to_string((long)s.size() - uploaded) + " samples NOT uploaded";
+        log(warn);
+        std::fprintf(stderr, "[cz] %s\n", warn.c_str()); std::fflush(stderr);
+      } else {
+        log("uploaded " + std::to_string(uploaded) + " samples");
+      }
       auto info = gh.pullInfo();
       double sinceRefresh = std::chrono::duration<double>(std::chrono::steady_clock::now() - lastRefresh).count();
       if (info && info->second > iter && sinceRefresh >= refreshMin * 60.0) {   // throttle the multi-MB net re-download

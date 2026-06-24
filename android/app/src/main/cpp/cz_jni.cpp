@@ -92,6 +92,7 @@ Java_dev_cribbage_zero_NativeBridge_runActor(JNIEnv* env, jclass cls,
       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
   if (!mid) return env->NewStringUTF("error: NativeBridge.httpRequest not found");
   jmethodID logMid = env->GetStaticMethodID(cls, "onActorLog", "(Ljava/lang/String;)V");
+  jmethodID alertMid = env->GetStaticMethodID(cls, "onActorAlert", "(Ljava/lang/String;)V");
 
   ActorConfig cfg;
   std::string repo = jstr(env, jrepo);
@@ -113,7 +114,12 @@ Java_dev_cribbage_zero_NativeBridge_runActor(JNIEnv* env, jclass cls,
     CZLOG("%s", m.c_str());
     if (logMid) { jstring jm = env->NewStringUTF(m.c_str()); env->CallStaticVoidMethod(cls, logMid, jm); env->DeleteLocalRef(jm); }
   };
-  long total = runActorLoop(http, cfg, g_stop, logFn);
+  // escalated bus-failure alert (rising edge only — see runActorLoop). Java decides whether to surface it as a
+  // heads-up notification, per the actor page's "alert me if uploads fail" toggle.
+  auto alertFn = [env, cls, alertMid](const std::string& m) {
+    if (alertMid) { jstring jm = env->NewStringUTF(m.c_str()); env->CallStaticVoidMethod(cls, alertMid, jm); env->DeleteLocalRef(jm); }
+  };
+  long total = runActorLoop(http, cfg, g_stop, logFn, alertFn);
   char buf[96];
   std::snprintf(buf, sizeof buf, "actor finished: %ld games", total);
   CZLOG("%s", buf);
