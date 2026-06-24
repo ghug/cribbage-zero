@@ -24,10 +24,10 @@
     function render() {
       var st = document.getElementById(opts.stateId), inp = document.getElementById(opts.inputId), clr = document.getElementById(opts.clearId);
       if (!st || !inp || !clr) return;
-      var has = !!mem, remembered = !!localStorage.getItem(opts.storeKey);
-      st.textContent = has ? ("✓ set" + (remembered ? " · saved on this device" : " · in-memory this session")) : "not set";
+      var has = !!mem;
+      st.textContent = has ? "✓ set" : "not set";
       st.className = "cz-tokstate" + (has ? " cz-tokset" : "");
-      inp.placeholder = has ? "•••••••• set — paste to replace" : opts.placeholderEmpty;
+      inp.placeholder = has ? "•••••••• — paste to replace" : opts.placeholderEmpty;
       clr.style.display = has ? "" : "none";
     }
     function commit() {   // pull a freshly-typed value into memory, wipe the field, mirror to storage per "remember"
@@ -48,7 +48,16 @@
   }
   var gitTok = tokenField({ storeKey: "cz_token", inputId: "cz-token", rememberId: "cz-remember", stateId: "cz-token-state", clearId: "cz-token-clear", placeholderEmpty: "ghp_… — leave blank for read-only" });
   var workerTok = tokenField({ storeKey: "cz_worker_token", legacyKey: "az_tok", inputId: "cz-wtok", rememberId: "cz-wremember", stateId: "cz-wtok-state", clearId: "cz-wtok-clear", placeholderEmpty: "worker token — to contribute self-play" });
-  var trainerTok = tokenField({ storeKey: "cz_trainer_token", inputId: "cz-ttok", rememberId: "cz-tremember", stateId: "cz-ttok-state", clearId: "cz-ttok-clear", placeholderEmpty: "trainer token — drain the bus / learner lease" });
+  var trainerTok = tokenField({ storeKey: "cz_trainer_token", inputId: "cz-ttok", rememberId: "cz-tremember", stateId: "cz-ttok-state", clearId: "cz-ttok-clear", placeholderEmpty: "trainer token — drain · lease" });
+
+  // one compact token block: label + write-only input + a single meta row (Remember · state · Forget)
+  function tokenHtml(inputId, rememberId, stateId, clearId, label, placeholder) {
+    return '<label for="' + inputId + '">' + label + '</label>' +
+      '<input id="' + inputId + '" type="password" placeholder="' + placeholder + '" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
+      '<div class="cz-tokmeta"><label class="cz-check"><input id="' + rememberId + '" type="checkbox" /> Remember</label>' +
+      '<span id="' + stateId + '" class="cz-tokstate"></span>' +
+      '<button id="' + clearId + '" class="cz-link" type="button">Forget</button></div>';
+  }
 
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
@@ -71,10 +80,12 @@
     ".cz-full{width:100%;margin-top:14px}",
     ".cz-modal a{color:var(--gold,#d6bc7a)}",
     ".cz-modal p{color:var(--mut,#a9c4b3);font-size:13px}",
-    ".cz-tokrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 0}",
-    ".cz-tokstate{font-size:12px;color:var(--mut,#a9c4b3)}",
+    ".cz-sub{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold,#d6bc7a);margin:16px 0 2px;border-top:1px solid var(--line,#2f6b4d);padding-top:12px}",
+    ".cz-tokmeta{display:flex;align-items:center;gap:10px;margin:5px 0 2px}",
+    ".cz-tokmeta .cz-check{margin:0;flex:0 0 auto}",
+    ".cz-tokstate{flex:1 1 auto;font-size:12px;color:var(--mut,#a9c4b3)}",
     ".cz-tokstate.cz-tokset{color:var(--good,#6fbf8e)}",
-    ".cz-link{background:none;border:0;color:var(--gold,#d6bc7a);font:inherit;font-size:12px;cursor:pointer;padding:0;text-decoration:underline}",
+    ".cz-link{flex:0 0 auto;background:none;border:0;color:var(--gold,#d6bc7a);font:inherit;font-size:12px;cursor:pointer;padding:0;text-decoration:underline}",
   ].join("");
 
   function node(html) { var d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
@@ -95,22 +106,14 @@
 
     var settings = node('<div id="cz-settings" class="cz-overlay" role="dialog" aria-modal="true" aria-label="Settings"><div class="cz-modal">' +
       '<div class="cz-modal-head"><h2>Settings</h2><button class="cz-done" type="button" data-close>Done</button></div>' +
-      '<label for="cz-token">GitHub token (Contents: write)</label>' +
-      '<input id="cz-token" type="password" placeholder="ghp_… — leave blank for read-only" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
-      '<label class="cz-check"><input id="cz-remember" type="checkbox" /> Remember token on this device (otherwise in-memory only)</label>' +
-      '<div class="cz-tokrow"><span id="cz-token-state" class="cz-tokstate"></span><button id="cz-token-clear" class="cz-link" type="button">Forget token</button></div>' +
       '<label for="cz-repo">Repo (owner/name)</label>' +
       '<input id="cz-repo" type="text" placeholder="' + REPO_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
       '<label for="cz-bus">Data-bus URL</label>' +
       '<input id="cz-bus" type="text" placeholder="' + BUS_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
-      '<label for="cz-wtok">Worker token (contribute self-play to the bus)</label>' +
-      '<input id="cz-wtok" type="password" placeholder="worker token — to contribute self-play" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
-      '<label class="cz-check"><input id="cz-wremember" type="checkbox" /> Remember worker token on this device (otherwise in-memory only)</label>' +
-      '<div class="cz-tokrow"><span id="cz-wtok-state" class="cz-tokstate"></span><button id="cz-wtok-clear" class="cz-link" type="button">Forget token</button></div>' +
-      '<label for="cz-ttok">Trainer token (drain the bus / learner lease)</label>' +
-      '<input id="cz-ttok" type="password" placeholder="trainer token — drain the bus / learner lease" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
-      '<label class="cz-check"><input id="cz-tremember" type="checkbox" /> Remember trainer token on this device (otherwise in-memory only)</label>' +
-      '<div class="cz-tokrow"><span id="cz-ttok-state" class="cz-tokstate"></span><button id="cz-ttok-clear" class="cz-link" type="button">Forget token</button></div>' +
+      '<div class="cz-sub">Tokens</div>' +
+      tokenHtml("cz-token", "cz-remember", "cz-token-state", "cz-token-clear", "GitHub token (Contents: write)", "ghp_… — blank = read-only") +
+      tokenHtml("cz-wtok", "cz-wremember", "cz-wtok-state", "cz-wtok-clear", "Worker token (append self-play)", "worker token — append self-play") +
+      tokenHtml("cz-ttok", "cz-tremember", "cz-ttok-state", "cz-ttok-clear", "Trainer token (drain · learner lease)", "trainer token — drain · lease") +
       '<button id="cz-openabout" class="cz-done cz-full" type="button">About Cribbage Zero</button>' +
       '</div></div>');
 
