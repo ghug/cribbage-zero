@@ -76,7 +76,8 @@ async function js(r) { return { status: r.status, body: await r.json().catch(() 
   check((await js(await call("POST", "/lease/acquire", T, { id: "learnerA", ttl: 60000 }))).body.ok === true, "learnerA renews its own lease");
   check((await js(await call("POST", "/lease/release", T, { id: "learnerA" }))).body.ok === true, "learnerA releases the lease");
   check((await js(await call("POST", "/lease/acquire", T, { id: "learnerB", ttl: 60000 }))).body.ok === true, "learnerB acquires after release");
-  check((await js(await call("GET", "/lease", T))).body.holder === "learnerB", "GET /lease shows the holder");
+  check((await js(await call("GET", "/lease", T))).body.holder === "learnerB", "GET /lease shows the holder (trainer token)");
+  check((await js(await call("GET", "/lease", W))).body.holder === "learnerB", "GET /lease shows the holder (WORKER token — read-only status)");
   env.DB._st.lease.expires_at = 1;   // force-expire learnerB's lease
   check((await js(await call("POST", "/lease/acquire", T, { id: "learnerC", ttl: 60000 }))).body.ok === true, "an expired lease can be taken over");
 

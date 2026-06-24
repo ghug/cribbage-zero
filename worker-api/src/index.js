@@ -14,7 +14,7 @@
  *   GET  /stats                     -> { pendingShards }         (actor)    queue depth
  *   POST /lease/acquire {id,ttl}    -> { ok, holder, expires_at } (learner) acquire/renew the learner lock
  *   POST /lease/release {id}        -> { ok }                    (learner)  release the lock (clean stop)
- *   GET  /lease                     -> { holder, expires_at }    (learner)  inspect the lock
+ *   GET  /lease                     -> { holder, expires_at }    (any token) inspect the lock (read-only status)
  *
  * The lease is a single-holder mutual-exclusion lock (TRAINER token) so only ONE learner trains + force-pushes
  * the net at a time; a TTL lets a failover take over if the holder dies. Shards are chunked small by the
@@ -95,7 +95,7 @@ export default {
         return json({ ok: true });
       }
       if (request.method === "GET" && path === "/lease") {
-        if (!isTrainer) return json({ error: "forbidden" }, 403);
+        if (!isActor) return json({ error: "unauthorized" }, 401);   // read-only status — any valid bus token (acquire/release stay trainer-only)
         const row = await env.DB.prepare("SELECT holder, expires_at FROM lease WHERE id=1").first();
         return json({ holder: row ? row.holder : "", expires_at: row ? row.expires_at : 0, now: Date.now() });
       }
