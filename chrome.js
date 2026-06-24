@@ -111,7 +111,6 @@
       tokenHtml("cz-token", "cz-remember", "cz-token-state", "cz-token-clear", "GitHub token (Contents: write)", "ghp_… — blank = read-only") +
       tokenHtml("cz-wtok", "cz-wremember", "cz-wtok-state", "cz-wtok-clear", "Worker token (append self-play)", "worker token — append self-play") +
       tokenHtml("cz-ttok", "cz-tremember", "cz-ttok-state", "cz-ttok-clear", "Trainer token (drain · learner lease)", "trainer token — drain · lease") +
-      '<button id="cz-openabout" class="cz-done cz-full" type="button">About Cribbage Zero</button>' +
       '</div></div>');
 
     var about = node('<div id="cz-about" class="cz-overlay" role="dialog" aria-modal="true" aria-label="About"><div class="cz-modal">' +
@@ -130,7 +129,6 @@
     function show(o) { o.classList.add("cz-on"); } function hide(o) { o.classList.remove("cz-on"); }
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
     document.getElementById("cz-info").addEventListener("click", function () { show(about); });
-    document.getElementById("cz-openabout").addEventListener("click", function () { hide(settings); show(about); });
     function commitAll() { gitTok.commit(); workerTok.commit(); trainerTok.commit(); }
     [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { commitAll(); hide(o); } }); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") { commitAll(); hide(settings); hide(about); } });

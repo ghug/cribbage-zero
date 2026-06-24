@@ -35,7 +35,10 @@
 
   <p class="sub" style="margin:-6px 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — add a <b>worker or trainer token</b> in ⚙ Settings to see the queue depth + learner status.</p>
 
-  <div class="btns"><button id="refresh">Refresh now</button></div>
+  <div class="btns" style="align-items:flex-end">
+    <button id="refresh">Refresh now</button>
+    <div style="flex:0 0 auto"><label for="interval" style="margin:0 0 4px">Auto (s)</label><input id="interval" type="number" min="0" value="15" style="width:92px;text-align:center;padding:11px 8px" title="auto-refresh interval in seconds (0 = off)" /></div>
+  </div>
 
   <div class="card">
     <div class="stat"><span class="k">Net — games trained</span><span class="v big" id="games">—</span></div>
@@ -48,7 +51,7 @@
   <p class="note">Everything here is read-only — no token is required to see the net's games/iter (the
   <b>net</b> branch is public). Any <b>bus token</b> (worker or trainer) reveals the queue depth and the
   learner status — whether a learner is running, and which one. To contribute self-play, run the
-  <b>cz_pc</b> engine on a PC — see <a href="dev.html">the tools hub</a>. The page refreshes every 15s.</p>
+  <b>cz_pc</b> engine on a PC — see <a href="dev.html">the tools hub</a>. Auto-refresh on your chosen interval (0 = off).</p>
   <p class="note" style="margin-top:10px">Version <span id="ver"></span> · public domain (The Unlicense).</p>
 </div>
 
@@ -109,9 +112,18 @@
   function stamp() { $("updated").textContent = "updated " + new Date().toLocaleTimeString(); }
   async function refreshAll() { await Promise.all([refreshNet(), refreshBus()]); stamp(); }
 
+  var timer = null;
+  function schedule() {   // (re)arm auto-refresh from the interval input; 0 = off
+    if (timer) { clearInterval(timer); timer = null; }
+    var s = Math.max(0, parseInt($("interval").value, 10) || 0);
+    localStorage.setItem("cz_mon_interval", s);
+    if (s > 0) timer = setInterval(refreshAll, s * 1000);
+  }
+  if (localStorage.getItem("cz_mon_interval") !== null) $("interval").value = localStorage.getItem("cz_mon_interval");
+  $("interval").addEventListener("change", schedule);
   $("refresh").addEventListener("click", refreshAll);
   refreshAll();
-  setInterval(refreshAll, 15000);
+  schedule();
 })();
 </script>
 </body>
