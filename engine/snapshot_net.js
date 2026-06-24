@@ -9,7 +9,6 @@
  *   node engine/snapshot_net.js --list                         # list snapshots (token-less ok on a public repo)
  *   CZ_TOKEN=<pat> node engine/snapshot_net.js --rollback <name>   # restore a snapshot onto the net branch (asks y/N)
  *   ... --rollback <name> --yes                                # restore without the prompt
- *   CZ_TOKEN=<pat> node engine/snapshot_net.js --migrate       # one-time: rename old-pattern snapshots to the new one
  *
  * Archiving writes snapshots/<date>-<time>-<games>g-iter<iter>.json on net-archive (e.g.
  * 20260623-2307-180000g-iter360.json) — a normal commit, so the branch retains every snapshot. The leading
@@ -24,7 +23,6 @@ const NET = "net", ARCH = "net-archive", CKPATH = "checkpoints/az_checkpoint.jso
 const TOKEN = process.env.CZ_TOKEN || "";
 const argv = process.argv.slice(2);
 const LIST = argv.includes("--list");
-const MIGRATE = argv.includes("--migrate");
 const YES = argv.includes("--yes") || argv.includes("-y");
 const rbI = argv.indexOf("--rollback");
 const ROLLBACK = rbI >= 0 ? argv[rbI + 1] : null;
@@ -50,19 +48,7 @@ function validNet(o) {   // accepts the C++ flat-W shape, the JS nested-W shape,
   }
   return Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn;
 }
-function stamp() { return fmtStamp(new Date().toISOString()); }   // 20260621-1830 (UTC)
-function fmtStamp(iso) { return iso.slice(0, 10).replace(/-/g, "") + "-" + iso.slice(11, 16).replace(":", ""); }
-// Parse a snapshot filename either shape. Returns {dateTime|null, games, iter, isNew}; null if unrecognized.
-function parseSnap(name) {
-  let m = name.match(/^(\d{8})-(\d{4})-(\d+)g-iter(\d+)\.json$/);          // new: <date>-<time>-<games>g-iter<iter>
-  if (m) return { isNew: true, dateTime: m[1] + "-" + m[2], games: +m[3], iter: +m[4] };
-  m = name.match(/^(\d+)g-iter(\d+)-(\d{8})-(\d{4})\.json$/);             // old: <games>g-iter<iter>-<date>-<time>
-  if (m) return { isNew: false, dateTime: m[3] + "-" + m[4], games: +m[1], iter: +m[2] };
-  m = name.match(/^(\d+)g-iter(\d+)-(.+)\.json$/);                        // descriptive suffix, no date in the name
-  if (m) return { isNew: false, dateTime: null, games: +m[1], iter: +m[2] };
-  return null;
-}
-function newName(p, dateTime) { return (dateTime || p.dateTime) + "-" + p.games + "g-iter" + p.iter + ".json"; }
+function stamp() { const d = new Date().toISOString(); return d.slice(0, 10).replace(/-/g, "") + "-" + d.slice(11, 16).replace(":", ""); }   // 20260621-1830 (UTC)
 
 // GET a file's content via the RAW media type — the net is multi-MB and the JSON repr only inlines ≤1MB.
 async function ghRaw(p) {
@@ -123,47 +109,8 @@ async function doRollback(name) {
   console.log("snapshot: rolled the net branch back to " + name + " @ commit " + commit.sha.slice(0, 8));
 }
 
-// the UTC date-time a snapshot file was added to net-archive (used when the old name has no date in it)
-async function fileCommitStamp(name) {
-  const cs = await gh("GET", "/repos/" + REPO + "/commits?sha=" + ARCH + "&path=" + encodeURIComponent(DIR + "/" + name) + "&per_page=1");
-  const iso = cs && cs[0] && cs[0].commit && (cs[0].commit.committer && cs[0].commit.committer.date || cs[0].commit.author && cs[0].commit.author.date);
-  return iso ? fmtStamp(iso) : null;
-}
-// one-time: rename every old-pattern snapshot to <date>-<time>-<games>g-iter<iter>.json, in a single commit.
-// Reuses each file's existing blob sha (no multi-MB re-upload) and deletes the old path (tree entry sha=null).
-async function doMigrate() {
-  let items; try { items = await gh("GET", "/repos/" + REPO + "/contents/" + DIR + "?ref=" + ARCH); }
-  catch (e) { if (e.status === 404) { console.log("snapshot: no snapshots to migrate"); return; } throw e; }
-  items = (items || []).filter((f) => f.name.endsWith(".json"));
-  const renames = [];
-  for (const f of items) {
-    const p = parseSnap(f.name);
-    if (!p) { console.log("  ? skip (unrecognized name): " + f.name); continue; }
-    if (p.isNew) { console.log("  = already new: " + f.name); continue; }
-    let dt = p.dateTime;
-    if (!dt) { dt = await fileCommitStamp(f.name); if (!dt) { console.log("  ? skip (no date available): " + f.name); continue; } }
-    const nn = newName(p, dt);
-    if (nn === f.name) { console.log("  = ok: " + f.name); continue; }
-    renames.push({ old: f.name, nu: nn, sha: f.sha });
-    console.log("  -> " + f.name + "  =>  " + nn);
-  }
-  if (!renames.length) { console.log("snapshot: nothing to migrate (all already follow the new pattern)"); return; }
-  const ref = await gh("GET", "/repos/" + REPO + "/git/ref/heads/" + ARCH);
-  const base = await gh("GET", "/repos/" + REPO + "/git/commits/" + ref.object.sha);
-  const tree = [];
-  for (const r of renames) {
-    tree.push({ path: DIR + "/" + r.nu, mode: "100644", type: "blob", sha: r.sha });    // add at the new path
-    tree.push({ path: DIR + "/" + r.old, mode: "100644", type: "blob", sha: null });     // delete the old path
-  }
-  const newTree = await gh("POST", "/repos/" + REPO + "/git/trees", { base_tree: base.tree.sha, tree });
-  const commit = await gh("POST", "/repos/" + REPO + "/git/commits", { message: "snapshots: rename to <date>-<time>-<games>g-iter<iter> (" + renames.length + " files)", tree: newTree.sha, parents: [ref.object.sha] });
-  await gh("PATCH", "/repos/" + REPO + "/git/refs/heads/" + ARCH, { sha: commit.sha });
-  console.log("snapshot: renamed " + renames.length + " snapshot(s) on " + ARCH + " @ commit " + commit.sha.slice(0, 8));
-}
-
 (async () => {
   if (LIST) return doList();
-  if (MIGRATE) { if (!TOKEN) { console.error("snapshot: set CZ_TOKEN to migrate"); process.exit(1); } return doMigrate(); }
   if (ROLLBACK) { if (!TOKEN) { console.error("snapshot: set CZ_TOKEN to roll back"); process.exit(1); } return doRollback(ROLLBACK); }
   if (!TOKEN) { console.error("snapshot: set CZ_TOKEN to archive (or pass --list)"); process.exit(1); }
   return doSnapshot();
