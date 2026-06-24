@@ -117,7 +117,7 @@
   }
   async function currentNetText() { return ghRaw("/contents/" + CKPATH + "?ref=" + NET); }
 
-  function parseName(n) { var m = n.match(/^(\d+)g-iter(\d+)-/); return m ? { games: +m[1], iter: +m[2] } : { games: null, iter: null }; }
+  function parseName(n) { var m = n.match(/(\d+)g-iter(\d+)/); return m ? { games: +m[1], iter: +m[2] } : { games: null, iter: null }; }   // matches both old <games>g-iter<iter>-<stamp> and new <stamp>-<games>g-iter<iter>
 
   async function refresh() {
     status("loading…");
@@ -152,7 +152,7 @@
       if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
       var o = cloud.obj, text = JSON.stringify(o);
       if (!validNet(o)) throw new Error("current net looks malformed — not archiving");
-      var games = o.games || 0, iter = o.iter || 0, name = games + "g-iter" + iter + "-" + stamp() + ".json";
+      var games = o.games || 0, iter = o.iter || 0, name = stamp() + "-" + games + "g-iter" + iter + ".json";
       // ensure net-archive exists (seed from the current net commit)
       try { await gh("GET", "/git/ref/heads/" + ARCH); }
       catch (e) { if (e.status !== 404) throw e; var base = await gh("GET", "/git/ref/heads/" + NET); await gh("POST", "/git/refs", { ref: "refs/heads/" + ARCH, sha: base.object.sha }); log("created net-archive branch"); }
