@@ -12,19 +12,42 @@
   var REPO_DEFAULT = "ghug/cribbage-zero";
   var BUS_DEFAULT = "https://cribbage-zero-bus.gabrielhug.workers.dev";
 
-  // The GitHub token is held HERE (a closure var, seeded from a remembered copy) — never in the input's value,
-  // so the secret never sits in the DOM where any element / script / screenshot / autofill could read it. The
-  // input is write-only: typing a token captures it here and the field is cleared; presence is shown by a label.
-  var memToken = localStorage.getItem("cz_token") || "";
-  function renderTokenState() {
-    var st = document.getElementById("cz-token-state"), inp = document.getElementById("cz-token"), clr = document.getElementById("cz-token-clear");
-    if (!st || !inp || !clr) return;
-    var has = !!memToken, remembered = !!localStorage.getItem("cz_token");
-    st.textContent = has ? ("✓ token set" + (remembered ? " · saved on this device" : " · in-memory this session")) : "no token · read-only mode";
-    st.className = "cz-tokstate" + (has ? " cz-tokset" : "");
-    inp.placeholder = has ? "•••••••• set — paste to replace" : "ghp_… — leave blank for read-only";
-    clr.style.display = has ? "" : "none";
+  // A credential held in a closure var (seeded from a remembered copy) — NEVER in the input's value, so the
+  // secret never sits in the DOM where any element / script / screenshot / autofill could read it. The input is
+  // write-only: typing a value captures it here and clears the field; presence is shown by a label. Two of these:
+  // the GitHub token (net/snapshot admin) and the bus worker token (contribute self-play).
+  function tokenField(opts) {   // { storeKey, legacyKey?, inputId, rememberId, stateId, clearId, placeholderEmpty }
+    if (opts.legacyKey && !localStorage.getItem(opts.storeKey)) {       // one-time migrate an old key to the cz_* one
+      var lv = localStorage.getItem(opts.legacyKey); if (lv) { localStorage.setItem(opts.storeKey, lv); localStorage.removeItem(opts.legacyKey); }
+    }
+    var mem = localStorage.getItem(opts.storeKey) || "";
+    function render() {
+      var st = document.getElementById(opts.stateId), inp = document.getElementById(opts.inputId), clr = document.getElementById(opts.clearId);
+      if (!st || !inp || !clr) return;
+      var has = !!mem, remembered = !!localStorage.getItem(opts.storeKey);
+      st.textContent = has ? ("✓ set" + (remembered ? " · saved on this device" : " · in-memory this session")) : "not set";
+      st.className = "cz-tokstate" + (has ? " cz-tokset" : "");
+      inp.placeholder = has ? "•••••••• set — paste to replace" : opts.placeholderEmpty;
+      clr.style.display = has ? "" : "none";
+    }
+    function commit() {   // pull a freshly-typed value into memory, wipe the field, mirror to storage per "remember"
+      var inp = document.getElementById(opts.inputId), rem = document.getElementById(opts.rememberId);
+      if (inp) { var t = inp.value.trim(); if (t) { mem = t; inp.value = ""; } }
+      if (rem) { if (rem.checked && mem) localStorage.setItem(opts.storeKey, mem); else localStorage.removeItem(opts.storeKey); }
+      render();
+    }
+    function wire() {
+      var inp = document.getElementById(opts.inputId), rem = document.getElementById(opts.rememberId), clr = document.getElementById(opts.clearId);
+      if (rem) rem.checked = !!localStorage.getItem(opts.storeKey);
+      if (inp) inp.addEventListener("change", commit);
+      if (rem) rem.addEventListener("change", commit);
+      if (clr) clr.addEventListener("click", function () { mem = ""; if (inp) inp.value = ""; localStorage.removeItem(opts.storeKey); render(); });
+      render();
+    }
+    return { get: function () { return mem; }, commit: commit, wire: wire };
   }
+  var gitTok = tokenField({ storeKey: "cz_token", inputId: "cz-token", rememberId: "cz-remember", stateId: "cz-token-state", clearId: "cz-token-clear", placeholderEmpty: "ghp_… — leave blank for read-only" });
+  var workerTok = tokenField({ storeKey: "cz_worker_token", legacyKey: "az_tok", inputId: "cz-wtok", rememberId: "cz-wremember", stateId: "cz-wtok-state", clearId: "cz-wtok-clear", placeholderEmpty: "worker token — to contribute self-play" });
 
   var CSS = [
     "#cz-icons{position:fixed;top:max(10px,env(safe-area-inset-top));right:12px;display:flex;gap:8px;z-index:60}",
@@ -79,6 +102,10 @@
       '<input id="cz-repo" type="text" placeholder="' + REPO_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
       '<label for="cz-bus">Data-bus URL</label>' +
       '<input id="cz-bus" type="text" placeholder="' + BUS_DEFAULT + '" autocapitalize="off" autocorrect="off" />' +
+      '<label for="cz-wtok">Worker token (contribute self-play to the bus)</label>' +
+      '<input id="cz-wtok" type="password" placeholder="worker token — to contribute self-play" autocapitalize="off" autocorrect="off" autocomplete="off" />' +
+      '<label class="cz-check"><input id="cz-wremember" type="checkbox" /> Remember worker token on this device (otherwise in-memory only)</label>' +
+      '<div class="cz-tokrow"><span id="cz-wtok-state" class="cz-tokstate"></span><button id="cz-wtok-clear" class="cz-link" type="button">Forget token</button></div>' +
       '<button id="cz-openabout" class="cz-done cz-full" type="button">About Cribbage Zero</button>' +
       '</div></div>');
 
@@ -93,44 +120,36 @@
 
     document.body.appendChild(icons); document.body.appendChild(settings); document.body.appendChild(about);
 
-    var tokIn = document.getElementById("cz-token"), remIn = document.getElementById("cz-remember"),
-        repoIn = document.getElementById("cz-repo"), busIn = document.getElementById("cz-bus");
-    remIn.checked = !!localStorage.getItem("cz_token");   // "remembered" iff a copy is persisted; the input stays empty
+    var repoIn = document.getElementById("cz-repo"), busIn = document.getElementById("cz-bus");
     repoIn.value = localStorage.getItem("cz_repo") || REPO_DEFAULT;
     busIn.value = localStorage.getItem("cz_bus_url") || BUS_DEFAULT;
 
-    // capture any freshly-typed token into memory, wipe it from the field, then mirror to storage per "remember"
-    function persistToken() { var t = tokIn.value.trim(); if (t) { memToken = t; tokIn.value = ""; }
-      if (remIn.checked && memToken) localStorage.setItem("cz_token", memToken); else localStorage.removeItem("cz_token"); renderTokenState(); }
     function persistRepo() { localStorage.setItem("cz_repo", repoIn.value.trim() || REPO_DEFAULT); }
     function persistBus() { localStorage.setItem("cz_bus_url", busIn.value.trim() || BUS_DEFAULT); }
-    remIn.addEventListener("change", persistToken);
-    tokIn.addEventListener("change", persistToken);
-    document.getElementById("cz-token-clear").addEventListener("click", function () { memToken = ""; tokIn.value = ""; localStorage.removeItem("cz_token"); renderTokenState(); });
+    gitTok.wire(); workerTok.wire();          // both tokens: empty write-only inputs + presence labels, never pre-filled
     repoIn.addEventListener("change", persistRepo);
     busIn.addEventListener("change", persistBus);
-    renderTokenState();
 
     function show(o) { o.classList.add("cz-on"); } function hide(o) { o.classList.remove("cz-on"); }
     document.getElementById("cz-gear").addEventListener("click", function () { show(settings); });
     document.getElementById("cz-info").addEventListener("click", function () { show(about); });
     document.getElementById("cz-openabout").addEventListener("click", function () { hide(settings); show(about); });
-    [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { persistToken(); persistRepo(); persistBus(); hide(o); } }); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { persistToken(); persistRepo(); persistBus(); hide(settings); hide(about); } });
+    function commitAll() { gitTok.commit(); workerTok.commit(); persistRepo(); persistBus(); }
+    [settings, about].forEach(function (o) { o.addEventListener("click", function (e) { if (e.target === o || e.target.hasAttribute("data-close")) { commitAll(); hide(o); } }); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { commitAll(); hide(settings); hide(about); } });
   }
 
   // Global accessors. The token is the in-memory closure var (never read from the DOM); repo/bus read the live
   // input with a localStorage fallback for code that runs before the chrome DOM is built.
   window.CZ = {
-    token: function () { return memToken; },
+    token: function () { return gitTok.get(); },              // GitHub token (Contents: write)
+    workerToken: function () { return workerTok.get(); },     // data-bus worker token (append self-play)
     repo: function () { var i = document.getElementById("cz-repo"); return (i && i.value.trim()) || localStorage.getItem("cz_repo") || REPO_DEFAULT; },
     busUrl: function () { var i = document.getElementById("cz-bus"); return ((i && i.value.trim()) || localStorage.getItem("cz_bus_url") || BUS_DEFAULT).replace(/\/+$/, ""); },
-    persist: function () { var t = document.getElementById("cz-token"), r = document.getElementById("cz-remember"), p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
-      if (t) { var v = t.value.trim(); if (v) { memToken = v; t.value = ""; } }                       // capture any typed token, wipe the DOM
-      if (r) { if (r.checked && memToken) localStorage.setItem("cz_token", memToken); else localStorage.removeItem("cz_token"); }
+    persist: function () { gitTok.commit(); workerTok.commit();   // capture+wipe both typed tokens, mirror per "remember"
+      var p = document.getElementById("cz-repo"), b = document.getElementById("cz-bus");
       if (p) localStorage.setItem("cz_repo", p.value.trim() || REPO_DEFAULT);
-      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT);
-      renderTokenState(); },
+      if (b) localStorage.setItem("cz_bus_url", b.value.trim() || BUS_DEFAULT); },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();

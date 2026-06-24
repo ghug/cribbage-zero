@@ -34,10 +34,7 @@
   learner. Runs as a foreground service with a wake-lock, so it keeps going with the screen off. <a href="dev.html">← tools</a></p>
 
   <div id="appUI" style="display:none">
-    <p class="sub" style="margin:0 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — change it in ⚙ Settings.</p>
-    <label for="tok">Worker token</label>
-    <input id="tok" type="password" placeholder="paste your worker token" autocapitalize="off" autocorrect="off" />
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="remember" type="checkbox" style="width:auto;margin:0" /> Remember worker token on this device</label>
+    <p class="sub" style="margin:0 0 12px;font-size:12px;">Data bus: <span id="busShow" style="color:var(--gold)"></span> — set the bus URL and your <b>worker token</b> in ⚙ Settings.</p>
     <div class="row" style="margin-top:4px">
       <div><label for="sims">MCTS sims</label><input id="sims" type="number" min="1" value="40" /></div>
       <div><label for="threads">Threads</label><input id="threads" type="number" min="1" value="2" /></div>
@@ -78,13 +75,10 @@
 
   // bus URL is a shared ⚙ Settings global (window.CZ.busUrl); other config persists per-page. Token opt-in.
   $("busShow").textContent = (window.CZ && CZ.busUrl()) || "";
-  var savedTok = localStorage.getItem("az_tok"); if (savedTok) { $("tok").value = savedTok; $("remember").checked = true; }
   if (localStorage.getItem("az_sims")) $("sims").value = localStorage.getItem("az_sims");
   if (localStorage.getItem("az_threads")) $("threads").value = localStorage.getItem("az_threads");
   if (localStorage.getItem("az_refresh")) $("refresh").value = localStorage.getItem("az_refresh");
   $("notify").checked = localStorage.getItem("az_notify") === "1";
-  function persistToken() { var t = $("tok").value.trim(); if ($("remember").checked && t) localStorage.setItem("az_tok", t); else localStorage.removeItem("az_tok"); }
-  $("remember").addEventListener("change", persistToken);
 
   function poll() {
     var running = false, st = "", log = "";
@@ -101,9 +95,8 @@
   }
 
   $("start").addEventListener("click", function () {
-    var api = (window.CZ && CZ.busUrl()) || "", tok = $("tok").value.trim();
-    if (!api || !tok) { $("state").textContent = "set the bus URL in ⚙ Settings + enter a worker token first"; return; }
-    persistToken();
+    var api = (window.CZ && CZ.busUrl()) || "", tok = (window.CZ && CZ.workerToken()) || "";
+    if (!api || !tok) { $("state").textContent = "set the bus URL + worker token in ⚙ Settings first"; return; }
     var sims = Math.max(1, parseInt($("sims").value, 10) || 40), threads = Math.max(1, parseInt($("threads").value, 10) || 2);
     var refreshMin = Math.max(0, parseInt($("refresh").value, 10) || 0);
     var notify = $("notify").checked;
