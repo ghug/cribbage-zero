@@ -42,7 +42,11 @@
     document.head.appendChild(style);
 
     var ver = window.CZ_VERSION || "";
-    var icons = node('<div id="cz-icons"><a id="cz-home" class="cz-icon" href="dev.html" aria-label="Home — dev tools" title="Tools home">⌂</a>' +
+    // The Home (⌂) link points back to the tools hub. The hub itself (dev.html) sets window.CZ_NO_HOME
+    // before loading chrome.js to omit it — it still gets ⚙ Settings + ⓘ About like every other page.
+    var home = window.CZ_NO_HOME ? "" :
+      '<a id="cz-home" class="cz-icon" href="dev.html" aria-label="Home — dev tools" title="Tools home">⌂</a>';
+    var icons = node('<div id="cz-icons">' + home +
       '<button id="cz-gear" class="cz-icon" type="button" aria-label="Settings">⚙</button>' +
       '<button id="cz-info" class="cz-icon" type="button" aria-label="About">ⓘ</button></div>');
 
