@@ -25,8 +25,9 @@ wrangler secret put WORKER_TOKEN            # actor token  (paste a long random 
 wrangler secret put TRAINER_TOKEN           # learner token (a DIFFERENT long random string)
 wrangler deploy                             # -> https://cribbage-zero-bus.<you>.workers.dev
 ```
-- `WORKER_TOKEN` → goes on **actors**. It can only `POST /shard`.
-- `TRAINER_TOKEN` → goes on the **learner**. It can also `GET /shards` + `POST /prune`.
+- `WORKER_TOKEN` → goes on **actors**. It can `POST /shard` and read the queue depth + learner status
+  (`GET /stats`, `GET /lease`).
+- `TRAINER_TOKEN` → goes on the **learner**. It can also `GET /shards` + `POST /prune` and hold the lease.
 - Free tier: D1 storage stays bounded because the learner deletes consumed shards; shards are chunked
   small (≤ `CZ_SHARD_MAX` samples) to fit a D1 row.
 
@@ -54,13 +55,17 @@ CZ_BUS_TOKEN=<WORKER_TOKEN> \
 core/build/cz_pc --actor
 ```
 
-**Phone actor** — open **`worker.html`** (in the app: ⌂ → ⇄ Cloudflare worker mode). Paste the bus URL +
-your `WORKER_TOKEN`, set the net repo (`ghug/cribbage-zero`), Start. It self-plays, uploads shards, and
-re-pulls the net from GitHub whenever the learner advances it.
+**Phone actor** — install the APK (GitHub Releases) and open the **On-device actor** page (`actor.html`,
+in the app: ⌂ → On-device actor). Paste the bus URL + your `WORKER_TOKEN`, set sims/threads + a net-refresh
+throttle, **Start**. The native engine self-plays in the background (foreground service + wake-lock + a live
+readout), uploads shards, and re-pulls the net when the learner advances it. (`worker.html` is the read-only
+**monitor**, not an actor.)
 
 ## Notes / limits
-- **One learner only.** Two learners would force-push the net over each other. Extra machines must be `--actor`.
-- The actor's net read is **anonymous** GitHub (public repo) — keep it polite (the page re-checks the tiny
-  `info.json` at most every 5 min, refetching the multi-MB net only when the iter actually advances).
+- **One learner only.** Two learners would force-push the net over each other (the bus lease enforces it).
+  Extra machines must be `--actor`.
+- The actor's net read is **anonymous** GitHub (public repo). It probes the tiny `info.json` once a round
+  and only re-downloads the multi-MB net when the iter advances — throttled to at most once per the actor's
+  **Refresh net (min)** setting, to bound data use.
 - Tune `CZ_BUS_LIMIT` (shards drained/round) and `CZ_SHARD_MAX` (samples/shard) if the queue grows; for a
   small fleet the always-on learner out-produces a phone, so the queue stays shallow.
