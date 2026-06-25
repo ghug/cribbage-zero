@@ -18,6 +18,10 @@
   button:disabled { opacity:.4; cursor:default; }
   #status { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:6px 0; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold); margin:18px 0 6px; }
+  .chart { background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:14px; padding:12px; margin:6px 0; }
+  .chart canvas { width:100%; height:220px; display:block; }
+  .chart .legend { display:flex; gap:6px; justify-content:center; align-items:center; margin:8px 0 0; font-size:13px; color:var(--mut); }
+  .chart .legend .sw { width:14px; height:3px; border-radius:2px; background:var(--good); } .chart .legend b { color:var(--ink); }
   .snap { display:flex; align-items:center; gap:8px; background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:6px 0; }
   .snap.live { border-color:var(--good); background:rgba(111,191,142,.10); }
   .snap .meta { flex:1; min-width:0; } .snap .meta b { font-size:14px; } .snap .meta span { display:block; color:var(--mut); font:11.5px ui-monospace,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -53,6 +57,12 @@
     <button id="refresh" class="act">↻ Refresh</button>
   </div>
   <div id="status"></div>
+
+  <h2>Progress — vs hard, over games trained</h2>
+  <div class="chart">
+    <canvas id="chart"></canvas>
+    <div class="legend"><span class="sw"></span>vs hard <b id="lHard">—</b></div>
+  </div>
 
   <h2>Live net</h2>
   <div id="liveBox"><div class="empty">— loading —</div></div>
@@ -250,7 +260,53 @@
     return row;
   }
 
+  // --- progress chart: vs-hard win% over games trained (progress branch; vs-random is ignored) ---
+  var progPts = [];
+  function fmtGames(x) { return x >= 1000 ? +(x / 1000).toFixed(x >= 10000 ? 0 : 1) + "k" : "" + Math.round(x); }
+  function niceStep(x) { var p = Math.pow(10, Math.floor(Math.log10(x))); var f = x / p; var n = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; return n * p; }
+  function parseCsv(text) {
+    return text.split("\n").map(function (l) { return l.trim(); })
+      .filter(function (l) { return l && l[0] !== "#" && !/^games\s*,/i.test(l); })
+      .map(function (l) { var a = l.split(","); return { x: +a[0], y: +a[1] }; })
+      .filter(function (p) { return isFinite(p.x) && isFinite(p.y); })
+      .sort(function (a, b) { return a.x - b.x; });
+  }
+  async function getHardCsv() {
+    var H = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) H.Authorization = "Bearer " + token();
+    var res = await fetch("https://api.github.com/repos/" + repo() + "/contents/progress-hard.csv?ref=" + PROG, { headers: H, cache: "no-store" });
+    if (res.status === 404) return [];
+    if (!res.ok) throw new Error("progress-hard.csv -> " + res.status);
+    return parseCsv(await res.text());
+  }
+  function drawChart() {
+    var cv = $("chart"); if (!cv) return;
+    var dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 600, H = 220;
+    cv.width = W * dpr; cv.height = H * dpr; var ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var padL = 40, padR = 12, padT = 10, padB = 24, plotW = W - padL - padR, plotH = H - padT - padB;
+    ctx.font = "11px ui-monospace,Menlo,monospace"; ctx.textBaseline = "alphabetic";
+    if (!progPts.length) { ctx.fillStyle = "#a9c4b3"; ctx.textAlign = "center"; ctx.fillText("no vs-hard points yet", W / 2, H / 2); return; }
+    var xmin = progPts[0].x, xmax = progPts[progPts.length - 1].x; if (xmin === xmax) { xmin -= 1; xmax += 1; }
+    var maxY = 0; progPts.forEach(function (p) { if (p.y > maxY) maxY = p.y; });   // auto-scale Y to the hard range (no random series to dwarf it)
+    var step = niceStep(Math.max(maxY * 1.15, 4) / 4), top = Math.max(step, Math.ceil(maxY * 1.15 / step) * step);
+    var X = function (x) { return padL + (x - xmin) / (xmax - xmin) * plotW; };
+    var Y = function (y) { return padT + (1 - y / top) * plotH; };
+    ctx.strokeStyle = "rgba(255,255,255,.12)"; ctx.fillStyle = "#a9c4b3"; ctx.lineWidth = 1; ctx.textAlign = "left";
+    for (var v = 0; v <= top + 1e-9; v += step) { var yy = Y(v); ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke(); ctx.fillText((+v.toFixed(2)) + "%", 4, yy + 3); }
+    [xmin, (xmin + xmax) / 2, xmax].forEach(function (xv, i) { ctx.textAlign = i === 0 ? "left" : i === 2 ? "right" : "center"; ctx.fillText(fmtGames(xv), X(xv), H - 7); });
+    ctx.strokeStyle = "#6fbf8e"; ctx.fillStyle = "#6fbf8e"; ctx.lineWidth = 2; ctx.beginPath();
+    progPts.forEach(function (p, i) { var xx = X(p.x), yy = Y(p.y); i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); });
+    ctx.stroke();
+    progPts.forEach(function (p) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 2.5, 0, 7); ctx.fill(); });
+  }
+  async function loadProgress() {
+    try { progPts = await getHardCsv(); $("lHard").textContent = progPts.length ? progPts[progPts.length - 1].y + "%" : "—"; drawChart(); }
+    catch (e) { log("progress: " + e.message); }
+  }
+
   async function refresh() {
+    loadProgress();   // vs-hard curve (independent of the snapshot list)
     status("loading…");
     try {
       var live = null; try { live = await CZNet.latest(repo(), token()); } catch (e) {}
@@ -360,6 +416,7 @@
   $("cancel").addEventListener("click", closeDialog);
   $("confirm").addEventListener("click", onConfirm);
   $("ovl").addEventListener("click", function (e) { if (e.target === $("ovl")) closeDialog(); });
+  window.addEventListener("resize", drawChart);
   refresh();
 })();
 </script>
