@@ -16,6 +16,7 @@ on:
       - "refresh-trainer.html"
       - "release-trainer.html"
       - "snapshot.html"
+      - "history.html"
       - "progress.html"
       - "local.html"
       - "worker.html"
@@ -54,7 +55,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site/worker _site/src
-          cp index.html dev.html actor.html eval.html refresh-trainer.html release-trainer.html snapshot.html progress.html local.html worker.html settings.js chrome.js netstore.js _site/
+          cp index.html dev.html actor.html eval.html refresh-trainer.html release-trainer.html snapshot.html history.html progress.html local.html worker.html settings.js chrome.js netstore.js _site/
           cp worker/az_bundle.js _site/worker/   # engine bundle (eval.html)
           cp src/winprob.js _site/src/
           touch _site/.nojekyll   # serve files verbatim (root index.html routes to dev.html)

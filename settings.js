@@ -4,6 +4,6 @@
 //     android/app/build.gradle versionName in step on an APK release.
 //   CZ_REPO    — the GitHub repo the tools read/write (net branch, snapshots, bus admin).
 //   CZ_BUS_URL — the Cloudflare data-bus Worker base URL.
-window.CZ_VERSION = "0.1.41-dev.16";
+window.CZ_VERSION = "0.1.41-dev.17";
 window.CZ_REPO = "ghug/cribbage-zero";
 window.CZ_BUS_URL = "https://cribbage-zero-bus.gabrielhug.workers.dev";

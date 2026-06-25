@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cribbage Zero — Net History</title>
+<style>
+  :root { --bg:#143d2b; --bg2:#1c4d37; --ink:#f3ecd6; --mut:#a9c4b3; --line:#2f6b4d; --good:#6fbf8e; --warn:#e0a64b; --bad:#e0726a; --gold:#d6bc7a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; min-height:100vh; background:radial-gradient(120% 90% at 50% 0%, var(--bg2), var(--bg)); color:var(--ink);
+         font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:max(16px,env(safe-area-inset-top)) 16px 28px; }
+  .wrap { max-width:560px; margin:0 auto; }
+  h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 14px; }
+  a { color:var(--gold); }
+  .btns { display:flex; gap:10px; margin:16px 0 8px; }
+  button.act { flex:1; padding:13px; border-radius:12px; border:0; font:600 15px inherit; cursor:pointer; }
+  #snap { background:var(--good); color:#10331f; } #refresh { background:rgba(255,255,255,.12); color:var(--ink); }
+  button:disabled { opacity:.4; cursor:default; }
+  #status { text-align:center; color:var(--gold); font:12px ui-monospace,Menlo,monospace; min-height:16px; margin:6px 0; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold); margin:18px 0 6px; }
+  .snap { display:flex; align-items:center; gap:8px; background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:6px 0; }
+  .snap.live { border-color:var(--good); background:rgba(111,191,142,.10); }
+  .snap .meta { flex:1; min-width:0; } .snap .meta b { font-size:14px; } .snap .meta span { display:block; color:var(--mut); font:11.5px ui-monospace,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .snap .meta span.ev { color:var(--gold); }
+  .snap button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--ink); font:600 13px inherit; cursor:pointer; flex:0 0 auto; }
+  .snap button.eval { border-color:var(--good); color:var(--good); }
+  .snap button.roll { border-color:var(--warn); color:var(--warn); }
+  .snap button.del { border-color:var(--bad); color:var(--bad); }
+  #list .empty { color:var(--mut); font-size:13px; }
+  #log { font:12px/1.5 ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:10px; padding:10px; min-height:48px; max-height:160px; overflow:auto; white-space:pre-wrap; margin-top:10px; }
+  .note { color:var(--mut); font-size:11.5px; margin-top:14px; }
+  .ovl { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; align-items:center; justify-content:center; padding:18px; z-index:20; }
+  .ovl.show { display:flex; }
+  .dlg { background:var(--bg2); border:1px solid var(--line); border-radius:16px; max-width:380px; width:100%; padding:20px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  .dlg h3 { margin:0 0 8px; font-size:17px; color:var(--warn); }
+  .dlg p { margin:0 0 6px; font-size:13.5px; }
+  .dlg .meta { font:12px ui-monospace,Menlo,monospace; color:var(--mut); background:rgba(0,0,0,.3); border-radius:8px; padding:8px 10px; margin:10px 0; word-break:break-all; }
+  .dlg .btns2 { display:flex; gap:10px; margin-top:14px; }
+  .dlg button { flex:1; padding:12px; border-radius:10px; border:0; font:600 15px inherit; cursor:pointer; }
+  .dlg .cancel { background:rgba(255,255,255,.12); color:var(--ink); } .dlg .confirm { background:var(--warn); color:#2a1c05; } .dlg .confirm.danger { background:var(--bad); color:#2a0f0c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>♣ Net History</h1>
+  <p class="sub">Milestone copies of the net on the
+  <a href="https://github.com/ghug/cribbage-zero/tree/net-archive" target="_blank" rel="noopener">net-archive</a> branch, with
+  their strength <b>vs the hard bot</b>. Snapshot, roll back, delete, or evaluate any net — 10,000 balanced games, greedy.
+  <a href="dev.html">← tools</a></p>
+
+  <div class="btns">
+    <button id="snap" class="act">📸 Snapshot now</button>
+    <button id="refresh" class="act">↻ Refresh</button>
+  </div>
+  <div id="status"></div>
+
+  <h2>Live net</h2>
+  <div id="liveBox"><div class="empty">— loading —</div></div>
+
+  <h2>Snapshots</h2>
+  <div id="list"><div class="empty">— loading —</div></div>
+  <div id="log"></div>
+  <p class="note">Eval plays 10,000 antithetic games vs the vendored hard bot (win-prob discard + depth-1 pegging) — a fixed
+  benchmark; a snapshot's result is saved on net-archive and shown here. Rollback overwrites the live <code>net</code> branch
+  (trainers resume from it). On Android the eval runs natively (fast); elsewhere it falls back to JS. Public domain (The Unlicense).</p>
+</div>
+
+<div class="ovl" id="ovl">
+  <div class="dlg">
+    <h3 id="dlgTitle">Roll back the net?</h3>
+    <p id="dlgBody"></p>
+    <div class="meta" id="dlgMeta"></div>
+    <div class="btns2"><button class="cancel" id="cancel">Cancel</button><button class="confirm" id="confirm">Roll back</button></div>
+  </div>
+</div>
+
+<script src="worker/az_bundle.js"></script><!-- Net, CribGame, argmaxLegal, netFromObj, makeRng, handDetail, pegChooseDeep, pval -->
+<script src="src/winprob.js"></script><!-- winProbHand (JS hard-bot discard) -->
+<script src="settings.js"></script><!-- window.CZ_VERSION -->
+<script src="chrome.js"></script><!-- shared ⚙/ⓘ Settings + About menu; window.CZ.token()/repo() -->
+<script src="netstore.js"></script><!-- shared net storage + last-cloud-net cache; window.CZNet -->
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var NET = "net", ARCH = "net-archive", PROG = "progress", CKPATH = "checkpoints/az_checkpoint.json", DIR = "snapshots", EVALS = "snapshots/evals.json";
+  var TARGET = 121, NPOL = 15, CPUCT = 1.5, DECKS = 5000;   // fixed: 5000 decks × 2 = 10,000 balanced games, greedy (no MCTS)
+  var busy = false, pendingAction = null;   // { type:"rollback"|"delete", name, sha }
+  var liveGames = 0;
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  function status(m) { $("status").textContent = m || ""; }
+  function log(m) { var el = $("log"), t = new Date().toLocaleTimeString(); el.textContent = "[" + t + "] " + m + "\n" + el.textContent; }
+  function token() { return CZ.token(); }
+  function repo() { return CZ.repo(); }
+  function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function unb64(s) { return decodeURIComponent(escape(atob(s.replace(/\s/g, "")))); }
+  function stamp() { var d = new Date().toISOString(); return d.slice(0, 10).replace(/-/g, "") + "-" + d.slice(11, 16).replace(":", ""); }
+
+  // --- GitHub (retries transient network failures; HTTP error statuses throw with .status) ---
+  async function gh(method, path, body) {
+    var headers = { Accept: "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) headers.Authorization = "Bearer " + token();
+    var opts = { method: method, headers: headers, cache: "no-store", body: body ? JSON.stringify(body) : undefined };
+    var res = null, neterr = null;
+    for (var attempt = 0; attempt < 3 && !res; attempt++) {
+      try { res = await fetch("https://api.github.com/repos/" + repo() + path, opts); }
+      catch (e) { neterr = e; if (attempt < 2) await sleep(500 * (attempt + 1)); }
+    }
+    if (!res) { var ne = new Error(method + " " + path.split("?")[0] + " -> network error (" + (neterr && neterr.message || "failed") + ")"); ne.status = -1; throw ne; }
+    var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (res.status >= 400) { var er = new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : "")); er.status = res.status; throw er; }
+    return j;
+  }
+  async function ghRaw(path) {   // RAW media type (no ≤1MB inline cap — the net is multi-MB)
+    var headers = { Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) headers.Authorization = "Bearer " + token();
+    var res = null, neterr = null;
+    for (var attempt = 0; attempt < 3 && !res; attempt++) {
+      try { res = await fetch("https://api.github.com/repos/" + repo() + path, { headers: headers, cache: "no-store" }); }
+      catch (e) { neterr = e; if (attempt < 2) await sleep(500 * (attempt + 1)); }
+    }
+    if (!res) { var ne = new Error("GET " + path.split("?")[0] + " -> network error"); ne.status = -1; throw ne; }
+    if (res.status >= 400) { var e = new Error("GET " + path.split("?")[0] + " -> " + res.status); e.status = res.status; throw e; }
+    return res.text();
+  }
+  function validNet(o) {   // accepts the C++ FLAT-W shape, the JS nested-W shape, and the legacy single-layer (W1)
+    if (!o || !Array.isArray(o.Wp) || !Array.isArray(o.bp)) return false;
+    if (Array.isArray(o.W) && o.W.length) {
+      var l0 = o.W[0];
+      if (!Array.isArray(l0) || !l0.length || !o.nIn) return false;
+      if (Array.isArray(l0[0])) return l0[0].length === o.nIn;
+      return typeof l0[0] === "number" && l0.length % o.nIn === 0;
+    }
+    return Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn;
+  }
+  async function appendFile(branch, path, content, message) {   // git data API (multi-MB safe)
+    var ref = await gh("GET", "/git/ref/heads/" + branch);
+    var base = await gh("GET", "/git/commits/" + ref.object.sha);
+    var blob = await gh("POST", "/git/blobs", { content: b64(content), encoding: "base64" });
+    var tree = await gh("POST", "/git/trees", { base_tree: base.tree.sha, tree: [{ path: path, mode: "100644", type: "blob", sha: blob.sha }] });
+    var commit = await gh("POST", "/git/commits", { message: message, tree: tree.sha, parents: [ref.object.sha] });
+    await gh("PATCH", "/git/refs/heads/" + branch, { sha: commit.sha });
+  }
+  function parseName(n) { var m = n.match(/(\d+)g-iter(\d+)/); return m ? { games: +m[1], iter: +m[2] } : { games: null, iter: null }; }
+
+  // --- the eval index (snapshots/evals.json): { "<name>": { hard:{pct,games,at} } } ---
+  async function loadEvals() { try { var c = await gh("GET", "/contents/" + EVALS + "?ref=" + ARCH); return JSON.parse(unb64(c.content)) || {}; } catch (e) { return {}; } }
+  async function tagSnapshot(name, pct) {
+    var cur = null, idx = {};
+    try { cur = await gh("GET", "/contents/" + EVALS + "?ref=" + ARCH); idx = JSON.parse(unb64(cur.content)) || {}; }
+    catch (e) { if (e.status !== 404) throw e; }
+    if (!idx || typeof idx !== "object") idx = {};
+    if (!idx[name]) idx[name] = {};
+    idx[name].hard = { pct: pct, games: DECKS * 2, at: new Date().toISOString() };
+    var body = { message: "eval " + name + " hard " + pct + "%", content: b64(JSON.stringify(idx)), branch: ARCH };
+    if (cur && cur.sha) body.sha = cur.sha;
+    await gh("PUT", "/contents/" + EVALS, body);
+  }
+
+  // --- vendored hard bot (CribGame info-set -> a discard/peg slot) ---
+  var CRIB_VALUE = [3.96, 3.95, 4.05, 4.06, 6.38, 4.10, 4.21, 4.34, 4.09, 3.74, 4.19, 3.73, 3.85];
+  var fifteen = function (r) { return Math.min(r, 10); };
+  function cribSeed(a, b) { var v = (CRIB_VALUE[a.r - 1] + CRIB_VALUE[b.r - 1]) * .5; if (a.r === b.r) v += 2; else if (Math.abs(a.r - b.r) <= 2) v += .5; if (fifteen(a.r) + fifteen(b.r) === 15) v += 2; return v; }
+  var COMBOS6 = (function () { var o = []; for (var i = 0; i < 6; i++) for (var j = i + 1; j < 6; j++) o.push([i, j]); return o; })();
+  function hardSlot(g, player) {
+    if (g.phase === "discard") {
+      var dealt = g.six[player], cribOurs = (g.dealer === player);
+      var board = { yourToGo: TARGET - g.scores[player], oppToGo: TARGET - g.scores[1 - player], youDeal: cribOurs, P: 2, teams: 2 };
+      var best = 0, bv = -1e9;
+      for (var s = 0; s < NPOL; s++) {
+        var i = COMBOS6[s][0], j = COMBOS6[s][1];
+        var four = dealt.filter(function (_, k) { return k !== i && k !== j; }), thrown = [dealt[i], dealt[j]];
+        var hd = handDetail(four, dealt), cv = cribSeed(thrown[0], thrown[1]);
+        var v = winProbHand(board, hd.ev + (cribOurs ? cv : 0), hd.sd, cribOurs ? 0 : cv);
+        if (v > bv) { bv = v; best = s; }
+      }
+      return best;
+    }
+    var hand = g._pegHand[player], count = g._count, kept = g.kept[player];
+    var acct = new Array(14).fill(0);
+    hand.forEach(function (c) { acct[c.r]++; });
+    g.six[player].forEach(function (c) { if (kept.indexOf(c) === -1) acct[c.r]++; });
+    if (g.starter) acct[g.starter.r]++;
+    g._playedSuited.forEach(function (c) { acct[c.r]++; });
+    var unseen = []; for (var r = 1; r <= 13; r++) { var a = 4 - acct[r]; for (var k = 0; k < a; k++) unseen.push(r); }
+    var legalR = hand.filter(function (c) { return pval(c.r) + count <= 31; }).map(function (c) { return c.r; });
+    var cr = pegChooseDeep(legalR, count, g._pile.slice(), hand.map(function (c) { return c.r; }), unseen);
+    var slot = hand.findIndex(function (c) { return c.r === cr && pval(c.r) + count <= 31; });
+    if (slot < 0) slot = g.decision.slots.findIndex(Boolean);
+    return slot;
+  }
+  // net plays greedy (no MCTS); ANTITHETIC pairs (same deal both halves, net on opposite seats) -> low-variance win%
+  async function runMatchJS(net, pairs) {
+    var rng = makeRng((Date.now() ^ 0x5eed) >>> 0), wins = 0;
+    for (var pi = 0; pi < pairs; pi++) {
+      var dealSeed = (rng() * 4294967296) >>> 0;
+      for (var half = 0; half < 2; half++) {
+        var dealRng = makeRng(dealSeed), moveRng = makeRng((dealSeed ^ (0x9e3779b9 * (half + 1))) >>> 0);
+        var g = new CribGame(dealRng), netSeat = half, guard = 0;
+        while (!g.done && guard++ < 4000) {
+          var p = g.toAct, legal = g.decision.slots;
+          g.step(p === netSeat ? argmaxLegal(Net.softmax(net.forward(g.encode(p)).logits, legal), legal) : hardSlot(g, p));
+        }
+        if (g.winner === netSeat) wins++;
+      }
+      if (pi % 25 === 0) { status("vs hard " + pi + "/" + pairs + " pairs …"); await sleep(0); }
+    }
+    return +(100 * wins / (pairs * 2)).toFixed(1);
+  }
+
+  // --- native engine (Android APK): the C++ eval, pulls the net (live or a snapshot) itself ---
+  function nativeAvail() { try { return !!(window.CZAndroid && CZAndroid.hasNativeEval && CZAndroid.hasNativeEval()); } catch (e) { return false; } }
+  async function runNative(branch, path) {
+    CZAndroid.startEval(repo(), token() || "", 1 /*hard*/, DECKS, branch || "", path || "");
+    while (CZAndroid.evalRunning()) { await sleep(300); status("native vs hard … " + Math.round(CZAndroid.evalProgress() * 100) + "%"); }
+    var r = CZAndroid.evalResult();
+    if (!r || r.indexOf("error") === 0) throw new Error(r || "native eval failed");
+    return +r;
+  }
+  // evaluate ONE net vs hard. snapName="" -> live net (branch/path empty); else a snapshot on net-archive.
+  async function evalHard(snapName) {
+    var useNative = nativeAvail();
+    var branch = snapName ? ARCH : "", path = snapName ? DIR + "/" + snapName : "";
+    if (useNative) return runNative(branch, path);
+    // JS fallback
+    if (typeof CribGame !== "function" || typeof winProbHand !== "function") throw new Error("engine not loaded (worker/az_bundle.js + src/winprob.js)");
+    var obj;
+    if (snapName) { obj = JSON.parse(await ghRaw("/contents/" + DIR + "/" + encodeURIComponent(snapName) + "?ref=" + ARCH)); }
+    else { var cloud = await CZNet.latest(repo(), token()); if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet"); obj = cloud.obj; }
+    return runMatchJS(netFromObj(obj), DECKS);
+  }
+
+  // --- render ---
+  function snapRow(opts) {   // { name, games, iter, evalHard, live }
+    var row = document.createElement("div"); row.className = "snap" + (opts.live ? " live" : "");
+    var meta = document.createElement("div"); meta.className = "meta";
+    var mb = document.createElement("b"); mb.textContent = opts.live ? "Live net" : opts.name; meta.appendChild(mb);   // filename/text -> textContent, never innerHTML
+    if (opts.games != null) { var ms = document.createElement("span"); ms.textContent = opts.games.toLocaleString() + " games · iter " + opts.iter; meta.appendChild(ms); }
+    if (opts.evalHard != null) { var me = document.createElement("span"); me.className = "ev"; me.textContent = "vs hard: " + opts.evalHard + "%"; meta.appendChild(me); }
+    row.appendChild(meta);
+    var evalBtn = document.createElement("button"); evalBtn.className = "eval"; evalBtn.textContent = "Eval";
+    evalBtn.addEventListener("click", function () { runEval(opts.live ? "" : opts.name, evalBtn); });
+    row.appendChild(evalBtn);
+    if (!opts.live) {
+      var rollBtn = document.createElement("button"); rollBtn.className = "roll"; rollBtn.textContent = "Roll back";
+      rollBtn.addEventListener("click", function () { askRollback(opts.name, opts); });
+      var delBtn = document.createElement("button"); delBtn.className = "del"; delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", function () { askDelete(opts.name, opts.sha, opts); });
+      row.appendChild(rollBtn); row.appendChild(delBtn);
+    }
+    return row;
+  }
+
+  async function refresh() {
+    status("loading…");
+    try {
+      var live = null; try { live = await CZNet.latest(repo(), token()); } catch (e) {}
+      var evals = await loadEvals();
+      liveGames = live && live.obj ? (live.obj.games || 0) : 0;
+      var lbox = $("liveBox"); lbox.innerHTML = "";
+      lbox.appendChild(snapRow({ live: true, games: liveGames, iter: live && live.obj ? (live.obj.iter || 0) : 0 }));
+      var items = [];
+      try { items = await gh("GET", "/contents/" + DIR + "?ref=" + ARCH); }
+      catch (e) { if (e.status !== 404) throw e; }
+      items = (items || []).filter(function (f) { return /\.json$/.test(f.name) && f.name !== "evals.json"; }).sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+      var box = $("list"); box.innerHTML = "";
+      if (!items.length) { box.innerHTML = '<div class="empty">no snapshots yet — tap “Snapshot now”.</div>'; status(""); return; }
+      items.forEach(function (f) {
+        var p = parseName(f.name), ev = evals[f.name];
+        box.appendChild(snapRow({ name: f.name, sha: f.sha, games: p.games, iter: p.iter, evalHard: ev && ev.hard ? ev.hard.pct : null }));
+      });
+      status(items.length + " snapshot" + (items.length === 1 ? "" : "s"));
+    } catch (e) { log("error: " + e.message); status("error"); }
+  }
+
+  async function runEval(snapName, btn) {
+    if (busy) return; busy = true; if (btn) btn.disabled = true; CZ.persist();
+    var label = snapName || "live net";
+    try {
+      status("evaluating " + label + " …"); log("eval " + label + " — 10000 games vs hard" + (nativeAvail() ? " (native)" : " (JS)"));
+      var pct = await evalHard(snapName);
+      log(label + " vs hard: " + pct + "%");
+      if (snapName) {
+        try { await tagSnapshot(snapName, pct); log("saved " + snapName + " → hard " + pct + "% on net-archive ✓"); }
+        catch (e) { log("note: result NOT saved (" + e.message + ")" + (token() ? "" : " — a write token is required to save")); }
+        await refresh();
+      } else {
+        status("live net vs hard: " + pct + "% (snapshot it to save the result)");
+      }
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false; if (btn) btn.disabled = false;
+  }
+
+  async function snapshot() {
+    if (busy) return; if (!token()) { status("a token is required to snapshot"); return; }
+    busy = true; $("snap").disabled = true; status("snapshotting…");
+    try {
+      var cloud = await CZNet.latest(repo(), token());
+      if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
+      var o = cloud.obj, text = JSON.stringify(o);
+      if (!validNet(o)) throw new Error("current net looks malformed — not archiving");
+      var games = o.games || 0, iter = o.iter || 0, name = stamp() + "-" + games + "g-iter" + iter + ".json";
+      try { await gh("GET", "/git/ref/heads/" + ARCH); }
+      catch (e) { if (e.status !== 404) throw e; var base = await gh("GET", "/git/ref/heads/" + NET); await gh("POST", "/git/refs", { ref: "refs/heads/" + ARCH, sha: base.object.sha }); log("created net-archive branch"); }
+      await appendFile(ARCH, DIR + "/" + name, text, "snapshot net @ " + games + " games (iter " + iter + ")");
+      log("archived " + DIR + "/" + name); status("snapshot saved ✓"); await refresh();
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false; $("snap").disabled = false;
+  }
+
+  // --- rollback / delete (confirm modal) ---
+  function showDialog(opts) { $("dlgTitle").textContent = opts.title; $("dlgBody").textContent = opts.body; var c = $("confirm"); c.textContent = opts.confirm; c.classList.toggle("danger", !!opts.danger); $("dlgMeta").textContent = opts.meta; $("ovl").classList.add("show"); }
+  function closeDialog() { $("ovl").classList.remove("show"); pendingAction = null; }
+  function askRollback(name, p) {
+    if (!token()) { status("a token is required to roll back"); return; }
+    pendingAction = { type: "rollback", name: name };
+    showDialog({ title: "Roll back the net?", confirm: "Roll back",
+      body: "This OVERWRITES the live net branch with this snapshot. Trainers resume from it on their next pull. (Snapshot the current net first if you might want it back.)",
+      meta: name + (p.games != null ? "\n→ " + p.games.toLocaleString() + " games, iter " + p.iter : "") });
+  }
+  function askDelete(name, sha, p) {
+    if (!token()) { status("a token is required to delete"); return; }
+    pendingAction = { type: "delete", name: name, sha: sha };
+    showDialog({ title: "Delete this snapshot?", confirm: "Delete", danger: true,
+      body: "This permanently removes this snapshot from net-archive. It can't be undone — the other snapshots and the live net are untouched.",
+      meta: name + (p.games != null ? "\n→ " + p.games.toLocaleString() + " games, iter " + p.iter : "") });
+  }
+  function onConfirm() { var a = pendingAction; if (!a) { closeDialog(); return; } if (a.type === "delete") doDelete(); else doRollback(); }
+  async function doRollback() {
+    $("ovl").classList.remove("show");
+    if (busy || !pendingAction || pendingAction.type !== "rollback") return;
+    var name = pendingAction.name; pendingAction = null;
+    busy = true; CZ.persist(); status("rolling back…");
+    try {
+      var text = await ghRaw("/contents/" + DIR + "/" + encodeURIComponent(name) + "?ref=" + ARCH);
+      var o = JSON.parse(text);
+      if (!validNet(o)) throw new Error("snapshot looks malformed — not restoring");
+      var blob = await gh("POST", "/git/blobs", { content: b64(text), encoding: "base64" });
+      var tree = await gh("POST", "/git/trees", { tree: [{ path: CKPATH, mode: "100644", type: "blob", sha: blob.sha }] });
+      var commit = await gh("POST", "/git/commits", { message: "rollback: net @ iter " + (o.iter || 0) + " (" + (o.games || 0) + " games) from " + name, tree: tree.sha, parents: [] });
+      await gh("PATCH", "/git/refs/heads/" + NET, { sha: commit.sha, force: true });
+      CZNet.setCloud(o, o.iter || 0, o.games || 0);
+      log("rolled net back to " + name + " @ " + commit.sha.slice(0, 8)); status("rolled back ✓"); await refresh();
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false;
+  }
+  async function doDelete() {
+    $("ovl").classList.remove("show");
+    if (busy || !pendingAction || pendingAction.type !== "delete") return;
+    var name = pendingAction.name, sha = pendingAction.sha; pendingAction = null;
+    busy = true; CZ.persist(); status("deleting…");
+    try {
+      await gh("DELETE", "/contents/" + DIR + "/" + encodeURIComponent(name), { message: "delete snapshot " + name, sha: sha, branch: ARCH });
+      log("deleted " + name); status("deleted ✓"); await refresh();
+    } catch (e) { log("error: " + e.message); status("error"); }
+    busy = false;
+  }
+
+  $("snap").addEventListener("click", function () { CZ.persist(); snapshot(); });
+  $("refresh").addEventListener("click", refresh);
+  $("cancel").addEventListener("click", closeDialog);
+  $("confirm").addEventListener("click", onConfirm);
+  $("ovl").addEventListener("click", function (e) { if (e.target === $("ovl")) closeDialog(); });
+  refresh();
+})();
+</script>
+</body>
+</html>

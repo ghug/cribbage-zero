@@ -33,9 +33,10 @@
   <h2>Browser tools</h2>
   <a class="card" href="worker.html"><b>Training monitor →</b><span>worker.html — read-only: live net progress (games/iter), data-bus queue depth, and learner-lease status. Self-play runs in the native cz_pc engine, not the browser.</span></a>
   <a class="card" href="actor.html"><b>On-device actor →</b><span>actor.html — in the Android app only: self-play in the background on this phone and upload shards to the bus, with a live readout. A browser can't self-play (shows install info).</span></a>
-  <a class="card" href="eval.html"><b>Evaluate the net →</b><span>eval.html — 10000 balanced games vs random + vs hard; recording to the progress branch is a separate manual approval.</span></a>
+  <a class="card" href="history.html"><b>Net History →</b><span>history.html — snapshot, roll back, delete, and evaluate any net (vs the hard bot, 10000 games) on one page. Supersedes Evaluate + Net snapshots below.</span></a>
   <a class="card" href="progress.html"><b>View progress →</b><span>progress.html — graphs net win% over games trained from the progress branch.</span></a>
-  <a class="card" href="snapshot.html"><b>Net snapshots &amp; rollback →</b><span>snapshot.html — archive the net to the net-archive branch, or roll back to a saved snapshot.</span></a>
+  <a class="card" href="eval.html"><b>Evaluate the net →</b><span>eval.html — 10000 balanced games vs random + vs hard; recording to the progress branch is a separate manual approval. (Superseded by Net History.)</span></a>
+  <a class="card" href="snapshot.html"><b>Net snapshots &amp; rollback →</b><span>snapshot.html — archive the net to the net-archive branch, or roll back to a saved snapshot. (Superseded by Net History.)</span></a>
   <a class="card" href="refresh-trainer.html"><b>Refresh the game's net →</b><span>refresh-trainer.html — pulls the latest net into the game's "Zero" bot bundle and rebuilds (dispatches cribbage-trainer's refresh-zero-net workflow). Heads-up only; the Zero bot is still experimental.</span></a>
   <div class="card disabled"><b>Release the game →</b><span>release-trainer.html — disabled for now.</span></div>
 

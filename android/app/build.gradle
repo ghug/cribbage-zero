@@ -58,6 +58,7 @@ tasks.register('syncWebAssets', Copy) {
         include 'refresh-trainer.html'  // dispatch the trainer's net-refresh workflow
         include 'release-trainer.html'  // dispatch the trainer's full release (confirms first)
         include 'snapshot.html'         // net snapshots + rollback (net-archive branch)
+        include 'history.html'          // Net History: snapshots + per-net hard-bot eval (supersedes eval + snapshot)
         include 'progress.html'         // graph of net win% over games trained
         include 'worker/**'       // the engine bundle (az_bundle.js)
         include 'version.js'      // window.CZ_VERSION (shown on dev/local/worker pages)
