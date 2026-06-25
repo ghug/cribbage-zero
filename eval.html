@@ -156,7 +156,7 @@
     if (token) headers.Authorization = "Bearer " + token;
     var res = await fetch("https://api.github.com" + path, { method: method, headers: headers, cache: "no-store", body: body ? JSON.stringify(body) : undefined });
     var txt = await res.text(); var j = null; try { j = JSON.parse(txt); } catch (e) {}
-    if (res.status >= 400) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : ""));
+    if (res.status >= 400) { var er = new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : "")); er.status = res.status; throw er; }
     if (j === null) throw new Error(method + " " + path.split("?")[0] + " -> " + res.status + " empty/non-JSON response (retry)");
     return j;
   }
