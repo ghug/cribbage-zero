@@ -93,9 +93,14 @@
     if (res.status >= 400) { var e = new Error(method + " " + path.split("?")[0] + " -> " + res.status + (j && j.message ? " " + j.message : "")); e.status = res.status; throw e; }
     return j;
   }
-  function validNet(o) {   // accepts the multi-layer (W/hidden) shape and the legacy single-layer (W1) shape
+  function validNet(o) {   // accepts the C++ FLAT-W shape, the JS nested-W shape, and the legacy single-layer (W1)
     if (!o || !Array.isArray(o.Wp) || !Array.isArray(o.bp)) return false;
-    if (Array.isArray(o.W)) return Array.isArray(o.W[0]) && Array.isArray(o.W[0][0]) && o.W[0][0].length === o.nIn;
+    if (Array.isArray(o.W) && o.W.length) {
+      var l0 = o.W[0];
+      if (!Array.isArray(l0) || !l0.length || !o.nIn) return false;
+      if (Array.isArray(l0[0])) return l0[0].length === o.nIn;          // JS nested [dout][din]
+      return typeof l0[0] === "number" && l0.length % o.nIn === 0;       // C++ flat row-major (dout*din)
+    }
     return Array.isArray(o.W1) && o.W1.length === o.nHid && Array.isArray(o.W1[0]) && o.W1[0].length === o.nIn;
   }
   // GET a file's content via the RAW media type (no ≤1MB inline cap — the net is multi-MB); returns text
