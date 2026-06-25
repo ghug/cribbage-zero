@@ -17,6 +17,8 @@ function mockDB() {
           return null;
         },
         async all() {
+          if (sql.includes("length(samples)")) { const lim = args[0] || 200; return { results: st.shards.slice(0, lim).map((s) => ({ id: s.id, sz: String(s.samples).length })) }; }
+          if (sql.includes("WHERE id IN")) { const ids = new Set(args); return { results: st.shards.filter((s) => ids.has(s.id)).map((s) => ({ id: s.id, samples: s.samples })) }; }
           if (sql.includes("FROM shards")) { const lim = args[0] || 200; return { results: st.shards.slice(0, lim).map((s) => ({ id: s.id, samples: s.samples })) }; }
           return { results: [] };
         },

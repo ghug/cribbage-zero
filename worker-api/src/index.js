@@ -50,8 +50,16 @@ export default {
 
       if (request.method === "GET" && path === "/shards") {
         if (!isTrainer) return json({ error: "forbidden" }, 403);
-        const limit = Math.max(1, Math.min(1000, parseInt(url.searchParams.get("limit") || "200", 10)));
-        const rs = await env.DB.prepare("SELECT id, samples FROM shards ORDER BY id LIMIT ?").bind(limit).all();
+        const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get("limit") || "200", 10)));
+        // Bound the batch by BYTES, not row count, so a few oversized shards can't OOM the Worker (128 MB).
+        // First read only the sizes (cheap — ints), pick the oldest rows up to ~10 MB (always ≥1), then fetch
+        // exactly those. Before this, a 400-row drain of ~1.5k-sample shards blew past memory and 500'd.
+        const sizes = await env.DB.prepare("SELECT id, length(samples) AS sz FROM shards ORDER BY id LIMIT ?").bind(limit).all();
+        const ids = []; let bytes = 0;
+        for (const r of (sizes.results || [])) { if (ids.length && bytes + r.sz > 10000000) break; ids.push(r.id); bytes += r.sz; }
+        if (!ids.length) return json({ shards: [] });
+        const ph = ids.map(() => "?").join(",");
+        const rs = await env.DB.prepare(`SELECT id, samples FROM shards WHERE id IN (${ph}) ORDER BY id`).bind(...ids).all();
         return json({ shards: (rs.results || []).map((r) => ({ id: r.id, samples: JSON.parse(r.samples) })) });
       }
 
