@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_REFRESH_MIN CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_WCLAMP CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_REFRESH_MIN CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_WCLAMP CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH CZ_SNAP_GAMES CZ_SNAP_DIR.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -22,6 +22,8 @@
 #include <memory>
 #include <thread>
 #include <ctime>
+#include <fstream>
+#include <sys/stat.h>
 #include <unistd.h>
 
 using namespace cz;
@@ -32,6 +34,20 @@ static std::string env(const char* k, const std::string& def = "") { const char*
 static int envi(const char* k, int def) { const char* v = getenv(k); return v && *v ? atoi(v) : def; }
 static double envf(const char* k, double def) { const char* v = getenv(k); return v && *v ? atof(v) : def; }
 static void log(const std::string& m) { std::printf("[cz] %s\n", m.c_str()); std::fflush(stdout); }
+
+// Write a timestamped local recovery snapshot of the net into `dir` (created if needed). The name matches the
+// snapshot.html / snapshot_net.js convention (YYYYMMDD-HHMM-<games>g-iter<iter>.json) so the rollback tooling
+// reads it directly. Best-effort: warns and returns on any failure — never throws into the learner loop.
+static void writeSnapshot(const std::string& dir, const Net& net, int iter, long games) {
+  ::mkdir(dir.c_str(), 0755);   // idempotent; an existing dir (EEXIST) is fine
+  std::time_t t = std::time(nullptr); std::tm lt{}; localtime_r(&t, &lt);
+  char stamp[32]; std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M", &lt);
+  char name[128]; std::snprintf(name, sizeof name, "%s/%s-%ldg-iter%d.json", dir.c_str(), stamp, games, iter);
+  std::ofstream f(name, std::ios::binary);
+  if (f) f << netToJson(net, iter, games).dump();
+  if (!f || !f.good()) { log(std::string("WARNING: local snapshot failed -> ") + name); return; }
+  log(std::string("local snapshot -> ") + name);
+}
 
 static void printHelp() {
   std::puts(
@@ -66,6 +82,8 @@ Environment:
   CZ_BATCH         train mini-batch size         (default 256)
   CZ_BUF           replay-buffer capacity        (default 200000)
   CZ_PUSH_GAMES    push the net every N games    (default 10000)
+  CZ_SNAP_GAMES    write a LOCAL net snapshot every N games  (default 100000; 0 = off)
+  CZ_SNAP_DIR      directory for local snapshots (default snapshots/)
   CZ_SHARD_MAX     samples per uploaded shard    (default 300; keep small — D1 caps the row size)
   CZ_REFRESH_MIN   actor: min minutes between net re-downloads  (default 0 = on every advance)
   CZ_BUS_LIMIT     shards drained per round      (default 400)
@@ -112,6 +130,8 @@ int main(int argc, char** argv) {
   std::string repo = env("CZ_REPO", "ghug/cribbage-zero"), token = env("CZ_TOKEN");
   std::string busUrl = env("CZ_BUS_URL"), busTok = env("CZ_BUS_TOKEN");
   int pushEvery = envi("CZ_PUSH_GAMES", 10000), bufCap = envi("CZ_BUF", 200000), batch = envi("CZ_BATCH", 256);
+  long snapGames = (long)envi("CZ_SNAP_GAMES", 100000);   // write a local net snapshot every N games (0 = off)
+  std::string snapDir = env("CZ_SNAP_DIR", "snapshots");  // directory for the local recovery snapshots
   double wd = envf("CZ_WD", 1e-4);   // L2 weight decay
   double wclamp = envf("CZ_WCLAMP", 10.0);   // clamp |weights| each mini-batch to bound the unbounded-ReLU runaway (anti-NaN); 0 = off
   // SGD learning rate. momentum (CZ_MOMENTUM, default 0.9) amplifies the effective step ~1/(1-mu) ≈ 10x, so
@@ -217,8 +237,10 @@ int main(int argc, char** argv) {
   net.setMomentum(envf("CZ_MOMENTUM", 0.9));   // SGD momentum (learner only; allocates velocity buffers)
   ReplayBuffer buf(bufCap);
   long pushAccum = 0;
+  long snapMark = snapGames > 0 ? (games / snapGames) * snapGames : 0;   // last games-boundary already snapshotted (don't re-snapshot the resume point)
   bool lostLease = false;
-  log("LEARNER: self-play + train + push every " + std::to_string(pushEvery) + " games");
+  log("LEARNER: self-play + train + push every " + std::to_string(pushEvery) + " games"
+      + (snapGames > 0 ? ", local snapshot every " + std::to_string(snapGames) + " games -> " + snapDir + "/" : ""));
   while (!g_stop) {
     if (usingLease) {   // renew at the top of each round (TTL >> round time)
       auto L = bus->acquireLease(workerId, leaseTtl);
@@ -246,6 +268,10 @@ int main(int argc, char** argv) {
     char line[160]; std::snprintf(line, sizeof line, "iter %d (%ld games): %ld samples, buf %zu, loss %.3f", iter, games, newSamples, buf.size(), loss);
     log(line);
     if (!net.finite()) { log("FATAL: net went non-finite (NaN/Inf) during training — NOT pushing (would corrupt the net branch). Stopping; restart resumes from the last good push."); break; }
+    if (snapGames > 0 && games - snapMark >= snapGames) {   // crossed a snapshot boundary this round (net is finite per the check above)
+      writeSnapshot(snapDir, net, iter, games);
+      snapMark = (games / snapGames) * snapGames;
+    }
     if (pushAccum >= pushEvery) { if (gh.pushNet(net, iter, games)) { log("pushed " + std::to_string(games) + " games"); pushAccum = 0; } else log("push failed"); }
   }
   if (!lostLease && net.finite() && gh.pushNet(net, iter, games)) log("wind-down push");   // never push a non-finite net
