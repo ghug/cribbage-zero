@@ -5,7 +5,7 @@
 //   --fresh: deliberately start from a random net (OVERWRITES the net branch on push). Default is SAFE:
 //            resume the existing net; start fresh ONLY on a genuine 404; ABORT on a read error / wrong arch.
 // Env: CZ_REPO CZ_TOKEN CZ_BUS_URL CZ_BUS_TOKEN CZ_WORKERS CZ_PUSH_GAMES CZ_BUF CZ_BATCH CZ_SIMS CZ_CHUNK
-//      CZ_SHARD_MAX CZ_REFRESH_MIN CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
+//      CZ_SHARD_MAX CZ_REFRESH_MIN CZ_BUS_LIMIT CZ_TEMP_MOVES CZ_DIR_EPS CZ_DIR_ALPHA CZ_FPU CZ_CPUCT_BASE CZ_WD CZ_WCLAMP CZ_LR CZ_LEASE_TTL_MS CZ_MOMENTUM CZ_BRANCH.  Args: [gamesPerRound] [sims].
 #include "parallel.h"
 #include "buffer.h"
 #include "bus.h"
@@ -62,6 +62,7 @@ Environment:
   CZ_LR            SGD learning rate             (default 0.002)
   CZ_MOMENTUM      SGD momentum                  (default 0.9)
   CZ_WD            L2 weight decay               (default 1e-4)
+  CZ_WCLAMP        clamp |weights| (anti-NaN)    (default 10; 0 = off)
   CZ_BATCH         train mini-batch size         (default 256)
   CZ_BUF           replay-buffer capacity        (default 200000)
   CZ_PUSH_GAMES    push the net every N games    (default 10000)
@@ -112,6 +113,7 @@ int main(int argc, char** argv) {
   std::string busUrl = env("CZ_BUS_URL"), busTok = env("CZ_BUS_TOKEN");
   int pushEvery = envi("CZ_PUSH_GAMES", 10000), bufCap = envi("CZ_BUF", 200000), batch = envi("CZ_BATCH", 256);
   double wd = envf("CZ_WD", 1e-4);   // L2 weight decay
+  double wclamp = envf("CZ_WCLAMP", 10.0);   // clamp |weights| each mini-batch to bound the unbounded-ReLU runaway (anti-NaN); 0 = off
   // SGD learning rate. momentum (CZ_MOMENTUM, default 0.9) amplifies the effective step ~1/(1-mu) ≈ 10x, so
   // the per-sample lr must be ~10x lower than plain SGD or the ReLU hidden layers collapse (dead neurons →
   // constant output). 0.002 with mu=0.9 ≈ an effective 0.02, the pre-momentum value that trained without collapse.
@@ -225,7 +227,7 @@ int main(int argc, char** argv) {
     std::vector<Sample> local;
     long played = parallelSelfPlay(net, sims, cpuct, pairsPerRound, workers, seed++, local, tempMoves, dirEps, dirAlpha, fpu, cBase);
     long newSamples = (long)local.size();
-    buf.add(local);
+    int dropped = buf.add(local);
     std::vector<long> pruneIds;
     if (bus) {
       long drainStatus = 0;
@@ -233,18 +235,20 @@ int main(int argc, char** argv) {
       if (drainStatus != 200)
         log(drainStatus == 403 ? "WARNING: bus drain FORBIDDEN (403) — CZ_BUS_TOKEN is a WORKER token; the learner needs the TRAINER token. NOT draining the bus."
             : "WARNING: bus drain failed (status " + std::to_string(drainStatus) + ") — check CZ_BUS_URL/CZ_BUS_TOKEN. NOT draining the bus.");
-      for (auto& s : sh) { buf.add(s.samples); newSamples += s.samples.size(); pruneIds.push_back(s.id); }
+      for (auto& s : sh) { dropped += buf.add(s.samples); newSamples += s.samples.size(); pruneIds.push_back(s.id); }
     }
+    if (dropped) log("WARNING: dropped " + std::to_string(dropped) + " non-finite/out-of-range sample(s) (bad data rejected before training)");
     int steps = std::max(1, (int)std::lround((double)trainPerSample * newSamples / batch));
     Rng tr(seed * 2654435761u);
-    double loss = trainReplay(net, buf, steps, batch, lr, tr, wd, /*augment=*/true);
+    double loss = trainReplay(net, buf, steps, batch, lr, tr, wd, /*augment=*/true, wclamp);
     iter++; games += played; pushAccum += played;
     if (bus && !pruneIds.empty()) bus->prune(pruneIds);
     char line[160]; std::snprintf(line, sizeof line, "iter %d (%ld games): %ld samples, buf %zu, loss %.3f", iter, games, newSamples, buf.size(), loss);
     log(line);
+    if (!net.finite()) { log("FATAL: net went non-finite (NaN/Inf) during training — NOT pushing (would corrupt the net branch). Stopping; restart resumes from the last good push."); break; }
     if (pushAccum >= pushEvery) { if (gh.pushNet(net, iter, games)) { log("pushed " + std::to_string(games) + " games"); pushAccum = 0; } else log("push failed"); }
   }
-  if (!lostLease && gh.pushNet(net, iter, games)) log("wind-down push");   // don't push if a failover took over
+  if (!lostLease && net.finite() && gh.pushNet(net, iter, games)) log("wind-down push");   // never push a non-finite net
   if (usingLease) bus->releaseLease(workerId);
   return 0;
 }

@@ -141,6 +141,7 @@ public:
   double trainStep(const std::vector<T>& x, double z, const std::vector<T>& pi,
                    const std::vector<bool>& legal, double lr, double cPol = 1.0) {
     ForwardT<T> f = forward(x);
+    if (!std::isfinite((double)f.v)) return 0;   // already-corrupt state or bad input → skip; don't backprop a NaN
     const std::vector<T>& h = f.acts.back();
     double v = f.v;
     std::vector<T> p = softmax(f.logits, legal);
@@ -208,6 +209,25 @@ public:
     for (auto& w : W) for (auto& x : w) x *= ff;
     for (auto& x : Wv) x *= ff;
     for (auto& x : Wp) x *= ff;
+  }
+
+  // true iff every parameter is finite (no NaN/Inf). Used to refuse pushing a poisoned net to the net branch.
+  bool finite() const {
+    auto ok = [](const std::vector<T>& v) { for (T x : v) if (!std::isfinite((double)x)) return false; return true; };
+    for (auto& w : W) if (!ok(w)) return false;
+    for (auto& bl : b) if (!ok(bl)) return false;
+    return ok(Wp) && ok(bp) && ok(Wv) && std::isfinite((double)bv);
+  }
+  // clamp every parameter to [-m, m] (m<=0 = off). Bounds the unbounded-ReLU runaway: weights can't grow without
+  // limit, so activations and gradients stay bounded and a single bad step can't explode to Inf/NaN.
+  void clampWeights(double m) {
+    if (!(m > 0)) return;
+    T lo = (T)(-m), hi = (T)m;
+    auto cl = [&](std::vector<T>& v) { for (T& x : v) { if (x > hi) x = hi; else if (x < lo) x = lo; } };
+    for (auto& w : W) cl(w);
+    for (auto& bl : b) cl(bl);
+    cl(Wp); cl(bp); cl(Wv);
+    if (bv > hi) bv = hi; else if (bv < lo) bv = lo;
   }
 };
 

@@ -31,6 +31,11 @@ add_executable(test_hardbot tests/test_hardbot.cpp)
 target_include_directories(test_hardbot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME hardbot COMMAND test_hardbot)
 
+# anti-NaN guards: sample validation, net.finite(), clampWeights
+add_executable(test_guards tests/test_guards.cpp)
+target_include_directories(test_guards PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME guards COMMAND test_guards)
+
 # vendored single-header JSON (net / sample / info serialization)
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
