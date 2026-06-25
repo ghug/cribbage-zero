@@ -13,7 +13,7 @@
   h1 { font-size:20px; margin:6px 0 2px; } .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
   a { color:var(--gold); }
   label { display:block; font-size:12px; color:var(--mut); margin:12px 0 4px; }
-  input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
+  input, select { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; }
   .row { display:flex; gap:10px; } .row > div { flex:1; }
   .btns { display:flex; gap:10px; margin:18px 0 8px; }
   button.act { flex:1; padding:14px; border-radius:12px; border:0; font:600 16px inherit; cursor:pointer; }
@@ -42,11 +42,13 @@
 <body>
 <div class="wrap">
   <h1>♣ Cribbage Zero — Evaluate</h1>
-  <p class="sub">Pulls the latest net and plays balanced games vs random and/or the hard bot — <b>run and record each
-  independently</b>. Recording a result on the
+  <p class="sub">Plays balanced games vs random and/or the hard bot — pick the <b>live net or any snapshot</b>, then <b>run each
+  independently</b>. A snapshot's result is tagged onto it (shown here and on the snapshot page); the live net can be recorded on the
   <a href="https://github.com/ghug/cribbage-zero/tree/progress" target="_blank" rel="noopener">progress</a> branch is a
   separate, manual step you approve per opponent. <a href="dev.html">← dev tools</a></p>
 
+  <label for="src">Net to evaluate</label>
+  <select id="src"><option value="">Live net</option></select>
   <div class="row">
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="5000" /></div>
     <div><label for="sims">MCTS sims (0 = greedy)</label><input id="sims" type="number" min="0" value="0" /></div>
@@ -81,7 +83,7 @@
 <script>
 (function () {   // IIFE so our locals (TARGET, COMBOS6, …) don't collide with the bundle's globals
   var $ = function (id) { return document.getElementById(id); };
-  var TARGET = 121, NPOL = 15, BRANCH = "net", PROG = "progress", CKPATH = "checkpoints/az_checkpoint.json";
+  var TARGET = 121, NPOL = 15, BRANCH = "net", PROG = "progress", ARCH = "net-archive", CKPATH = "checkpoints/az_checkpoint.json", EVALS = "snapshots/evals.json";
   var token = "", repo = "ghug/cribbage-zero", busy = false, sims = 0, CPUCT = 1.5;
   var rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
@@ -172,6 +174,45 @@
     await gh("PUT", "/repos/" + repo + "/contents/" + file, { message: "eval @ " + games + " games: " + file + " " + pct + "%", content: b64(content), sha: cur.sha, branch: PROG });
   }
 
+  // --- snapshot sources (net-archive) + the per-snapshot eval index (snapshots/evals.json) ---
+  function snapGames(n) { var m = String(n).match(/(\d+)g-iter(\d+)/); return m ? { games: +m[1], iter: +m[2] } : { games: 0, iter: 0 }; }
+  async function loadSnapshots() {   // snapshot filenames on net-archive (newest first), excluding the index
+    try {
+      var items = await gh("GET", "/repos/" + repo + "/contents/snapshots?ref=" + ARCH);
+      return (items || []).filter(function (f) { return /\.json$/.test(f.name) && f.name !== "evals.json"; })
+        .map(function (f) { return f.name; }).sort().reverse();
+    } catch (e) { if (e.status === 404) return []; throw e; }
+  }
+  async function loadEvals() {   // the eval index { "<name>": { random:{pct,games,at}, hard:{...} } }; {} if absent
+    try { var c = await gh("GET", "/repos/" + repo + "/contents/" + EVALS + "?ref=" + ARCH); return JSON.parse(unb64(c.content)) || {}; }
+    catch (e) { return {}; }
+  }
+  function evalSuffix(ev) {
+    if (!ev) return ""; var p = [];
+    if (ev.random) p.push("R " + ev.random.pct + "%"); if (ev.hard) p.push("H " + ev.hard.pct + "%");
+    return p.length ? "  ·  " + p.join(" ") : "";
+  }
+  async function populateSources() {   // (re)fill the picker: Live net + every snapshot, annotated with its recorded eval
+    var sel = $("src"), keep = sel.value;
+    var names, evals; try { names = await loadSnapshots(); evals = await loadEvals(); } catch (e) { log("snapshots: " + e.message); return; }
+    sel.innerHTML = "";
+    var live = document.createElement("option"); live.value = ""; live.textContent = "Live net"; sel.appendChild(live);
+    names.forEach(function (n) { var o = document.createElement("option"); o.value = n; o.textContent = n + evalSuffix(evals[n]); sel.appendChild(o); });
+    sel.value = keep;   // preserve selection across refreshes (no-op if it vanished)
+  }
+  // merge ONE opponent's result into snapshots/evals.json on net-archive (read-modify-write; needs a write token)
+  async function tagSnapshot(name, which, pct, testGames) {
+    var cur = null, idx = {};
+    try { cur = await gh("GET", "/repos/" + repo + "/contents/" + EVALS + "?ref=" + ARCH); idx = JSON.parse(unb64(cur.content)) || {}; }
+    catch (e) { if (e.status !== 404) throw e; }
+    if (!idx || typeof idx !== "object") idx = {};
+    if (!idx[name]) idx[name] = {};
+    idx[name][which] = { pct: pct, games: testGames, at: new Date().toISOString() };
+    var body = { message: "eval " + name + " " + which + " " + pct + "%", content: b64(JSON.stringify(idx)), branch: ARCH };
+    if (cur && cur.sha) body.sha = cur.sha;
+    await gh("PUT", "/repos/" + repo + "/contents/" + EVALS, body);
+  }
+
   // in-page confirm modal (no native dialogs — works in any WebView); resolves true/false
   function confirmModal(title, body, okLabel) {
     $("cmTitle").textContent = title; $("cmBody").textContent = body; $("cmOk").textContent = okLabel || "OK";
@@ -186,7 +227,7 @@
 
   // per-opponent last eval, recorded independently: results.random / results.hard = { games, pct, testGames, sims }
   var results = { random: null, hard: null };
-  function recordable(r) { return !!r && r.testGames >= 10000 && r.sims === 0; }
+  function recordable(r) { return !!r && !r.snapshot && r.testGames >= 10000 && r.sims === 0; }   // progress curve = live net only; snapshots auto-tag to evals.json
   function refreshRec(b) { $("recRand").disabled = b || !recordable(results.random); $("recHard").disabled = b || !recordable(results.hard); }
   function setBusyUI(b) { $("runRand").disabled = b; $("runHard").disabled = b; refreshRec(b); }
   function oppOf(which) { return which === "random" ? function (g, p, moveRng) { return randomLegal(g.decision.slots, moveRng); } : function (g, p, moveRng) { return hardSlot(g, p); }; }
@@ -194,15 +235,17 @@
   // native engine (Android APK only): the C++ eval runs much faster and pulls the net itself. Greedy only
   // (sims = 0). Mirrors the JS path's antithetic match — same win% basis.
   function nativeEvalAvailable() { try { return !!(window.CZAndroid && CZAndroid.hasNativeEval && CZAndroid.hasNativeEval()); } catch (e) { return false; } }
-  async function runNative(which, decks, label) {
-    CZAndroid.startEval(repo, token || "", which === "hard" ? 1 : 0, decks);
+  // branch/path empty = live net; else score a snapshot (e.g. "net-archive", "snapshots/<name>.json")
+  async function runNative(which, decks, label, branch, path) {
+    CZAndroid.startEval(repo, token || "", which === "hard" ? 1 : 0, decks, branch || "", path || "");
     while (CZAndroid.evalRunning()) { await sleep(300); status("native " + label + " … " + Math.round(CZAndroid.evalProgress() * 100) + "%"); }
     var r = CZAndroid.evalResult();
     if (!r || r.indexOf("error") === 0) throw new Error(r || "native eval failed");
     return +r;
   }
 
-  // run ONE opponent's evaluation, independent of the other; never records
+  // run ONE opponent's evaluation, independent of the other. Live net -> progress-recordable; a snapshot ->
+  // auto-tagged into net-archive snapshots/evals.json (shown on this page + the snapshot page).
   async function runOne(which) {
     if (busy) return; busy = true; setBusyUI(true);
     var label = which === "random" ? "vs random" : "vs hard", resEl = which === "random" ? "rRand" : "rHard";
@@ -213,17 +256,34 @@
     var useNative = nativeEvalAvailable() && $("native").checked;   // native is greedy-only
     var simsUsed = useNative ? 0 : sims;
     var decks = Math.max(1, parseInt($("decks").value, 10) || 5000), games = decks * 2;
+    var snap = $("src").value;   // "" = live net; else a snapshot filename on net-archive
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
-      status("pulling net …"); await sleep(0);
-      var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages, no re-download)
-      if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
-      var ck = cloud.obj, trained = ck.games || 0;
-      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label + (useNative ? " (native)" : ""));
-      var pct = useNative ? await runNative(which, decks, label) : await runMatch(netFromObj(ck), oppOf(which), decks, label);
+      var trained, pct;
+      if (snap) {
+        trained = snapGames(snap).games;
+        log("snapshot " + snap + " — " + games + " balanced games " + label + (useNative ? " (native)" : ""));
+        if (useNative) {
+          pct = await runNative(which, decks, label, ARCH, "snapshots/" + snap);
+        } else {
+          status("pulling snapshot …"); await sleep(0);
+          var text = await ghRaw("/repos/" + repo + "/contents/snapshots/" + encodeURIComponent(snap) + "?ref=" + ARCH);
+          var obj = JSON.parse(text); if (!trained) trained = obj.games || 0;
+          pct = await runMatch(netFromObj(obj), oppOf(which), decks, label);
+        }
+        try { await tagSnapshot(snap, which, pct, games); log("tagged " + snap + " " + which + " " + pct + "% on net-archive ✓"); await populateSources(); }
+        catch (e) { log("note: result NOT saved to net-archive (" + e.message + ")" + (token ? "" : " — a write token is required to tag snapshots")); }
+      } else {
+        status("pulling net …"); await sleep(0);
+        var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages, no re-download)
+        if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
+        trained = cloud.obj.games || 0;
+        log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label + (useNative ? " (native)" : ""));
+        pct = useNative ? await runNative(which, decks, label, "", "") : await runMatch(netFromObj(cloud.obj), oppOf(which), decks, label);
+      }
       $(resEl).textContent = pct; log(label + ": " + pct + "%");
-      results[which] = { games: trained, pct: pct, testGames: games, sims: simsUsed };
-      status("done — " + label + (recordable(results[which]) ? " · recordable" : " · not recordable (need ≥ 10000 games & sims = 0)"));
+      results[which] = { games: trained, pct: pct, testGames: games, sims: simsUsed, snapshot: snap || null };
+      status("done — " + label + (snap ? " · tagged on the snapshot" : (recordable(results[which]) ? " · recordable" : " · not recordable (need ≥ 10000 games & sims = 0)")));
     } catch (e) { log("error: " + e.message); status("error"); }
     busy = false; setBusyUI(false);
   }
@@ -250,8 +310,10 @@
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
-  if (nativeEvalAvailable()) $("nativeWrap").style.display = "flex";   // APK only — show the native-engine toggle
+  if (nativeEvalAvailable()) { $("nativeWrap").style.display = "flex"; $("native").checked = true; }   // APK only — show the native toggle, ON by default
   // token + repo live in the shared Settings menu (chrome.js / window.CZ)
+  repo = CZ.repo(); token = CZ.token();
+  populateSources();   // fill the snapshot picker (live net + every net-archive snapshot, annotated with its eval)
   $("runRand").addEventListener("click", function () { CZ.persist(); runOne("random"); });
   $("runHard").addEventListener("click", function () { CZ.persist(); runOne("hard"); });
   $("recRand").addEventListener("click", function () { CZ.persist(); recordOne("random"); });

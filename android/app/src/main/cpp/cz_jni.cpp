@@ -135,22 +135,27 @@ Java_dev_cribbage_zero_NativeBridge_stopActor(JNIEnv*, jclass) { g_stop = true; 
 // runEval(repo, token, which, decks) -> "<winPct>" (1 decimal) or "error: ...". which: 0 = vs random, 1 = vs
 // hard. BLOCKS — call on a background thread. Pulls the net via the Java HTTP bridge, then runs the antithetic
 // match natively (greedy net; same basis as engine/eval_zero.js). Reports progress via onEvalProgress(double).
+// branch/path select the net to score: empty path = the live net (checkpoints/az_checkpoint.json on the net
+// branch); a non-empty path pulls that file from `branch` (e.g. net-archive snapshots/<name>.json) so a
+// snapshot can be evaluated without first rolling it back onto the live net.
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_cribbage_zero_NativeBridge_runEval(JNIEnv* env, jclass cls, jstring jrepo, jstring jtoken, jint which, jint decks) {
+Java_dev_cribbage_zero_NativeBridge_runEval(JNIEnv* env, jclass cls, jstring jrepo, jstring jtoken, jint which, jint decks,
+                                            jstring jbranch, jstring jpath) {
   jmethodID mid = env->GetStaticMethodID(cls, "httpRequest",
       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
   if (!mid) return env->NewStringUTF("error: NativeBridge.httpRequest not found");
   jmethodID progMid = env->GetStaticMethodID(cls, "onEvalProgress", "(D)V");
 
   std::string repo = jstr(env, jrepo), token = jstr(env, jtoken);
+  std::string branch = jstr(env, jbranch), path = jstr(env, jpath);
   if (repo.empty()) repo = "ghug/cribbage-zero";
   const std::vector<int> HIDDEN = {256, 256, 256, 256};
   JniHttp http(env, cls, mid);
   GithubNet gh(&http, repo, token, "net");
   Net net(INPUT_DIM, HIDDEN, NPOL, 0.0, 1);
   try {
-    auto n = gh.pullNet();
-    if (!n) return env->NewStringUTF("error: no net on GitHub yet");
+    auto n = path.empty() ? gh.pullNet() : gh.pullFrom(branch.empty() ? "net-archive" : branch, path);
+    if (!n) return env->NewStringUTF(path.empty() ? "error: no net on GitHub yet" : "error: snapshot not found");
     if (!validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) return env->NewStringUTF("error: net architecture mismatch");
     net = netFromJson(*n);
   } catch (const std::exception& e) { return env->NewStringUTF((std::string("error: ") + e.what()).c_str()); }

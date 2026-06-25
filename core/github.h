@@ -50,6 +50,18 @@ public:
     return j;
   }
 
+  // Pull ANY net-shaped JSON from an arbitrary branch/path (e.g. a snapshot at net-archive
+  // snapshots/<name>.json) so the eval can score an archived checkpoint, not just the live net.
+  // Same semantics as pullNet: 404 -> nullopt; any other non-200 / malformed body -> throw.
+  std::optional<json> pullFrom(const std::string& branch, const std::string& path) {
+    auto r = http_->get(api("/contents/" + path + "?ref=" + branch), rawHeaders());
+    if (r.status == 404) return std::nullopt;
+    if (r.status != 200) throw std::runtime_error("pull " + path + " -> " + std::to_string(r.status));
+    auto j = json::parse(r.body, nullptr, false);
+    if (j.is_discarded()) throw std::runtime_error("pull " + path + " -> malformed JSON");
+    return j;
+  }
+
   // orphan force-push of the net + info file. Returns true on success.
   bool pushNet(const Net& net, int iter, long games) {
     std::string netJson = netToJson(net, iter, games).dump();

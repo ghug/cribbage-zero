@@ -23,6 +23,7 @@
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold); margin:18px 0 6px; }
   .snap { display:flex; align-items:center; gap:10px; background:rgba(0,0,0,.24); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:6px 0; }
   .snap .meta { flex:1; min-width:0; } .snap .meta b { font-size:14px; } .snap .meta span { display:block; color:var(--mut); font:11.5px ui-monospace,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .snap .meta span.ev { color:var(--gold); }
   .snap button { padding:8px 11px; border-radius:8px; border:1px solid var(--warn); background:transparent; color:var(--warn); font:600 13px inherit; cursor:pointer; flex:0 0 auto; }
   .snap button.del { border-color:var(--bad); color:var(--bad); }
   #list .empty { color:var(--mut); font-size:13px; }
@@ -131,7 +132,9 @@
       var items = [];
       try { items = await gh("GET", "/contents/" + DIR + "?ref=" + ARCH); }
       catch (e) { if (e.status !== 404) throw e; }
-      items = (items || []).filter(function (f) { return /\.json$/.test(f.name); }).sort(function (a, b) { return a.name < b.name ? 1 : -1; });
+      var evals = {};   // snapshots/evals.json (written by eval.html) -> { "<name>": { random:{pct,games,at}, hard:{...} } }
+      try { var ej = await gh("GET", "/contents/" + DIR + "/evals.json?ref=" + ARCH); evals = JSON.parse(unb64(ej.content)) || {}; } catch (e) {}
+      items = (items || []).filter(function (f) { return /\.json$/.test(f.name) && f.name !== "evals.json"; }).sort(function (a, b) { return a.name < b.name ? 1 : -1; });
       var box = $("list"); box.innerHTML = "";
       if (!items.length) { box.innerHTML = '<div class="empty">no snapshots yet — tap “Snapshot now”.</div>'; status(""); return; }
       items.forEach(function (f) {
@@ -141,6 +144,13 @@
         var mb = document.createElement("b"); mb.textContent = f.name;   // the self-describing filename (one place) -> textContent, never innerHTML
         meta.appendChild(mb);
         if (p.games != null) { var ms = document.createElement("span"); ms.textContent = p.games.toLocaleString() + " games · iter " + p.iter; meta.appendChild(ms); }
+        var ev = evals[f.name];
+        if (ev && (ev.random || ev.hard)) {
+          var parts = [];
+          if (ev.random) parts.push("random " + ev.random.pct + "%");
+          if (ev.hard) parts.push("hard " + ev.hard.pct + "%");
+          var me = document.createElement("span"); me.className = "ev"; me.textContent = "eval: " + parts.join(" · "); meta.appendChild(me);
+        }
         var rollBtn = document.createElement("button"); rollBtn.textContent = "Roll back";
         rollBtn.addEventListener("click", function () { askRollback(f.name, p); });
         var delBtn = document.createElement("button"); delBtn.className = "del"; delBtn.textContent = "Delete";

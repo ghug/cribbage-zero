@@ -156,13 +156,21 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean hasNativeEval() { return true; }
 
+        // live net (back-compat 4-arg form)
         @JavascriptInterface
         public void startEval(String repo, String token, int which, int decks) {
+            startEval(repo, token, which, decks, "", "");
+        }
+
+        // branch/path empty = live net; else score a snapshot (e.g. "net-archive", "snapshots/<name>.json")
+        @JavascriptInterface
+        public void startEval(String repo, String token, int which, int decks, String branch, String path) {
             if (NativeBridge.evalRunning) return;
             NativeBridge.evalRunning = true; NativeBridge.evalProgress = 0; NativeBridge.evalResult = "";
+            final String br = branch == null ? "" : branch, pa = path == null ? "" : path;
             new Thread(() -> {
                 String r;
-                try { r = NativeBridge.runEval(repo, token, which, decks); }
+                try { r = NativeBridge.runEval(repo, token, which, decks, br, pa); }
                 catch (Throwable t) { r = "error: " + (t.getMessage() == null ? t.toString() : t.getMessage()); }
                 NativeBridge.evalResult = r; NativeBridge.evalRunning = false;
             }, "cz-eval").start();

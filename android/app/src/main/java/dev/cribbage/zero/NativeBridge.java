@@ -34,8 +34,11 @@ public final class NativeBridge {
      * Run a native evaluation (which: 0 = vs random, 1 = vs hard) over {@code decks} antithetic pairs.
      * BLOCKS — call on a background thread. Returns the win% as a string ("63.4") or "error: …".
      * Reports progress via {@link #onEvalProgress(double)}.
+     *
+     * {@code branch}/{@code path} pick the net to score: pass empty strings to score the live net; pass a
+     * branch (e.g. "net-archive") and path (e.g. "snapshots/&lt;name&gt;.json") to score an archived snapshot.
      */
-    public static native String runEval(String repo, String token, int which, int decks);
+    public static native String runEval(String repo, String token, int which, int decks, String branch, String path);
 
     // ---- eval state, observed by MainActivity's CzBridge / the eval page ----
     public static volatile boolean evalRunning = false;
