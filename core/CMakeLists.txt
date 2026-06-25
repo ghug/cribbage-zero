@@ -26,6 +26,11 @@ add_executable(test_selfplay tests/test_selfplay.cpp)
 target_include_directories(test_selfplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME selfplay COMMAND test_selfplay)
 
+# hard-bot + native eval (hardbot.h / eval.h) validated vs the JS reference values
+add_executable(test_hardbot tests/test_hardbot.cpp)
+target_include_directories(test_hardbot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME hardbot COMMAND test_hardbot)
+
 # vendored single-header JSON (net / sample / info serialization)
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 

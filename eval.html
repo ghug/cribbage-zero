@@ -51,6 +51,7 @@
     <div><label for="decks">Decks (×2 = games)</label><input id="decks" type="number" min="1" value="5000" /></div>
     <div><label for="sims">MCTS sims (0 = greedy)</label><input id="sims" type="number" min="0" value="0" /></div>
   </div>
+  <label id="nativeWrap" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin:6px 0 0;cursor:pointer"><input id="native" type="checkbox" style="width:auto;margin:0" /> Use the native engine (Android — much faster; greedy, ignores MCTS sims)</label>
 
   <div class="results">
     <div class="res">
@@ -190,6 +191,17 @@
   function setBusyUI(b) { $("runRand").disabled = b; $("runHard").disabled = b; refreshRec(b); }
   function oppOf(which) { return which === "random" ? function (g, p, moveRng) { return randomLegal(g.decision.slots, moveRng); } : function (g, p, moveRng) { return hardSlot(g, p); }; }
 
+  // native engine (Android APK only): the C++ eval runs much faster and pulls the net itself. Greedy only
+  // (sims = 0). Mirrors the JS path's antithetic match — same win% basis.
+  function nativeEvalAvailable() { try { return !!(window.CZAndroid && CZAndroid.hasNativeEval && CZAndroid.hasNativeEval()); } catch (e) { return false; } }
+  async function runNative(which, decks, label) {
+    CZAndroid.startEval(repo, token || "", which === "hard" ? 1 : 0, decks);
+    while (CZAndroid.evalRunning()) { await sleep(300); status("native " + label + " … " + Math.round(CZAndroid.evalProgress() * 100) + "%"); }
+    var r = CZAndroid.evalResult();
+    if (!r || r.indexOf("error") === 0) throw new Error(r || "native eval failed");
+    return +r;
+  }
+
   // run ONE opponent's evaluation, independent of the other; never records
   async function runOne(which) {
     if (busy) return; busy = true; setBusyUI(true);
@@ -198,17 +210,19 @@
     repo = CZ.repo();
     token = CZ.token();   // reads use the token when present (higher rate limit), token-less otherwise
     sims = Math.max(0, parseInt($("sims").value, 10) || 0);   // 0 = greedy policy; >0 = MCTS per move (the canonical progress metric is sims=0)
+    var useNative = nativeEvalAvailable() && $("native").checked;   // native is greedy-only
+    var simsUsed = useNative ? 0 : sims;
     var decks = Math.max(1, parseInt($("decks").value, 10) || 5000), games = decks * 2;
     rng = makeRng((Date.now() ^ 0x5eed) >>> 0);
     try {
       status("pulling net …"); await sleep(0);
       var cloud = await CZNet.latest(repo, token);   // shared last-cloud-net cache (reused across pages, no re-download)
       if (!cloud || !cloud.obj) throw new Error("no net on GitHub yet");
-      var ck = cloud.obj, net = netFromObj(ck), trained = ck.games || 0;
-      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label);
-      var pct = await runMatch(net, oppOf(which), decks, label);   // decks = antithetic pairs (each = 2 games)
+      var ck = cloud.obj, trained = ck.games || 0;
+      log("net @ " + trained.toLocaleString() + " games" + (cloud.fromCache ? " (cached)" : "") + " — " + games + " balanced games " + label + (useNative ? " (native)" : ""));
+      var pct = useNative ? await runNative(which, decks, label) : await runMatch(netFromObj(ck), oppOf(which), decks, label);
       $(resEl).textContent = pct; log(label + ": " + pct + "%");
-      results[which] = { games: trained, pct: pct, testGames: games, sims: sims };
+      results[which] = { games: trained, pct: pct, testGames: games, sims: simsUsed };
       status("done — " + label + (recordable(results[which]) ? " · recordable" : " · not recordable (need ≥ 10000 games & sims = 0)"));
     } catch (e) { log("error: " + e.message); status("error"); }
     busy = false; setBusyUI(false);
@@ -236,6 +250,7 @@
   }
 
   if (typeof CribGame !== "function" || typeof winProbHand !== "function") { log("engine not loaded — serve this page with worker/az_bundle.js and src/winprob.js alongside it"); }
+  if (nativeEvalAvailable()) $("nativeWrap").style.display = "flex";   // APK only — show the native-engine toggle
   // token + repo live in the shared Settings menu (chrome.js / window.CZ)
   $("runRand").addEventListener("click", function () { CZ.persist(); runOne("random"); });
   $("runHard").addEventListener("click", function () { CZ.persist(); runOne("hard"); });

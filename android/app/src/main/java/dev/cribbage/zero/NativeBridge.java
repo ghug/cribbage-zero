@@ -30,6 +30,21 @@ public final class NativeBridge {
     /** Signal a running actor loop to stop (safe to call from another thread). */
     public static native void stopActor();
 
+    /**
+     * Run a native evaluation (which: 0 = vs random, 1 = vs hard) over {@code decks} antithetic pairs.
+     * BLOCKS — call on a background thread. Returns the win% as a string ("63.4") or "error: …".
+     * Reports progress via {@link #onEvalProgress(double)}.
+     */
+    public static native String runEval(String repo, String token, int which, int decks);
+
+    // ---- eval state, observed by MainActivity's CzBridge / the eval page ----
+    public static volatile boolean evalRunning = false;
+    public static volatile double evalProgress = 0;   // 0..1
+    public static volatile String evalResult = "";    // "<pct>" or "error: …" on completion
+
+    /** Invoked FROM native (on the eval thread) with the fraction of pairs completed. */
+    public static void onEvalProgress(double frac) { evalProgress = frac; }
+
     /** Invoked FROM native (on the actor thread) for each progress line — surfaced in the actor page + notification. */
     public static void onActorLog(String m) { SelfPlayService.pushLog(m); }
 

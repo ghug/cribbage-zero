@@ -152,6 +152,31 @@ public class MainActivity extends Activity {
             startService(i);
         }
 
+        // ---- native eval (eval.html): run a vs-random / vs-hard match in C++ on a background thread ----
+        @JavascriptInterface
+        public boolean hasNativeEval() { return true; }
+
+        @JavascriptInterface
+        public void startEval(String repo, String token, int which, int decks) {
+            if (NativeBridge.evalRunning) return;
+            NativeBridge.evalRunning = true; NativeBridge.evalProgress = 0; NativeBridge.evalResult = "";
+            new Thread(() -> {
+                String r;
+                try { r = NativeBridge.runEval(repo, token, which, decks); }
+                catch (Throwable t) { r = "error: " + (t.getMessage() == null ? t.toString() : t.getMessage()); }
+                NativeBridge.evalResult = r; NativeBridge.evalRunning = false;
+            }, "cz-eval").start();
+        }
+
+        @JavascriptInterface
+        public boolean evalRunning() { return NativeBridge.evalRunning; }
+
+        @JavascriptInterface
+        public double evalProgress() { return NativeBridge.evalProgress; }
+
+        @JavascriptInterface
+        public String evalResult() { return NativeBridge.evalResult; }
+
         @JavascriptInterface
         public boolean isRunning() { return SelfPlayService.running; }
 

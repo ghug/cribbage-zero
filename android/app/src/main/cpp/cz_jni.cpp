@@ -20,6 +20,9 @@
 #include <ctime>
 #include "parallel.h"   // self-play + the engine (curl-free)
 #include "actor.h"      // the shared actor loop (runActorLoop)
+#include "eval.h"       // native net eval (evalVsRandom / evalVsHard)
+#include "github.h"     // GithubNet (pull the net for eval)
+#include "net_io.h"     // netFromJson / validNetJson
 
 using namespace cz;
 #define CZLOG(...) __android_log_print(ANDROID_LOG_INFO, "cz", __VA_ARGS__)
@@ -128,3 +131,35 @@ Java_dev_cribbage_zero_NativeBridge_runActor(JNIEnv* env, jclass cls,
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cribbage_zero_NativeBridge_stopActor(JNIEnv*, jclass) { g_stop = true; }
+
+// runEval(repo, token, which, decks) -> "<winPct>" (1 decimal) or "error: ...". which: 0 = vs random, 1 = vs
+// hard. BLOCKS — call on a background thread. Pulls the net via the Java HTTP bridge, then runs the antithetic
+// match natively (greedy net; same basis as engine/eval_zero.js). Reports progress via onEvalProgress(double).
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cribbage_zero_NativeBridge_runEval(JNIEnv* env, jclass cls, jstring jrepo, jstring jtoken, jint which, jint decks) {
+  jmethodID mid = env->GetStaticMethodID(cls, "httpRequest",
+      "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+  if (!mid) return env->NewStringUTF("error: NativeBridge.httpRequest not found");
+  jmethodID progMid = env->GetStaticMethodID(cls, "onEvalProgress", "(D)V");
+
+  std::string repo = jstr(env, jrepo), token = jstr(env, jtoken);
+  if (repo.empty()) repo = "ghug/cribbage-zero";
+  const std::vector<int> HIDDEN = {256, 256, 256, 256};
+  JniHttp http(env, cls, mid);
+  GithubNet gh(&http, repo, token, "net");
+  Net net(INPUT_DIM, HIDDEN, NPOL, 0.0, 1);
+  try {
+    auto n = gh.pullNet();
+    if (!n) return env->NewStringUTF("error: no net on GitHub yet");
+    if (!validNetJson(*n, INPUT_DIM, HIDDEN, NPOL)) return env->NewStringUTF("error: net architecture mismatch");
+    net = netFromJson(*n);
+  } catch (const std::exception& e) { return env->NewStringUTF((std::string("error: ") + e.what()).c_str()); }
+
+  auto prog = [env, cls, progMid](double f) { if (progMid) env->CallStaticVoidMethod(cls, progMid, (jdouble)f); };
+  int pairs = decks > 0 ? (int)decks : 5000;
+  Rng rng((uint32_t)(time(nullptr) ^ 0x5eed));
+  double frac = (which == 1) ? evalVsHard(net, pairs, rng, prog) : evalVsRandom(net, pairs, rng, prog);
+  char buf[32]; std::snprintf(buf, sizeof buf, "%.1f", 100.0 * frac);
+  CZLOG("eval which=%d decks=%d -> %s%%", (int)which, (int)decks, buf);
+  return env->NewStringUTF(buf);
+}
