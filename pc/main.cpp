@@ -75,9 +75,9 @@ Environment:
   CZ_BUS_TOKEN     bus token: trainer (learner) or worker (actor)
   CZ_WORKERS       self-play threads             (default: CPU cores - 1)
   CZ_SIMS          MCTS sims per move            (default 40)
-  CZ_LR            SGD learning rate             (default 0.002)
+  CZ_LR            SGD learning rate             (default 0.0005)
   CZ_MOMENTUM      SGD momentum                  (default 0.9)
-  CZ_WD            L2 weight decay               (default 1e-4)
+  CZ_WD            L2 weight decay               (default 0.03)
   CZ_WCLAMP        clamp |weights| (anti-NaN)    (default 10; 0 = off)
   CZ_BATCH         train mini-batch size         (default 256)
   CZ_BUF           replay-buffer capacity        (default 200000)
@@ -132,12 +132,13 @@ int main(int argc, char** argv) {
   int pushEvery = envi("CZ_PUSH_GAMES", 10000), bufCap = envi("CZ_BUF", 200000), batch = envi("CZ_BATCH", 256);
   long snapGames = (long)envi("CZ_SNAP_GAMES", 100000);   // write a local net snapshot every N games (0 = off)
   std::string snapDir = env("CZ_SNAP_DIR", "snapshots");  // directory for the local recovery snapshots
-  double wd = envf("CZ_WD", 1e-4);   // L2 weight decay
+  double wd = envf("CZ_WD", 0.03);   // L2 weight decay (0.03: enough to stop the unbounded-ReLU runaway without over-shrinking; 1e-4 was effectively off)
   double wclamp = envf("CZ_WCLAMP", 10.0);   // clamp |weights| each mini-batch to bound the unbounded-ReLU runaway (anti-NaN); 0 = off
-  // SGD learning rate. momentum (CZ_MOMENTUM, default 0.9) amplifies the effective step ~1/(1-mu) ≈ 10x, so
-  // the per-sample lr must be ~10x lower than plain SGD or the ReLU hidden layers collapse (dead neurons →
-  // constant output). 0.002 with mu=0.9 ≈ an effective 0.02, the pre-momentum value that trained without collapse.
-  double lr = envf("CZ_LR", 0.002);
+  // SGD learning rate. momentum (CZ_MOMENTUM, default 0.9) amplifies the effective step ~1/(1-mu) ≈ 10x. At
+  // 0.002 the net chased noisy MCTS targets and ERODED strength (81.8% -> 79% vs random over 20k games); at
+  // 0.0005 (with wd 0.03) it climbs steadily instead (81.8% -> 88.3% over 40k games). Lower still risks the
+  // ReLU layers collapsing (dead neurons -> constant output), so 0.0005 is the calibrated sweet spot.
+  double lr = envf("CZ_LR", 0.0005);
   const int trainPerSample = 2;
   uint32_t seed = (uint32_t)time(nullptr) ^ (uint32_t)getpid();
   signal(SIGINT, onSigint);
